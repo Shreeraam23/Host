@@ -1,6 +1,7 @@
 
 # Initialize bot and dispatcher
 TOKEN='6799036771:AAHEjzGXpAeFitUTLfoh6_7O3uLoivIQnU4'
+
 #import logging
 import os
 import subprocess
@@ -16,7 +17,6 @@ dp = Dispatcher(bot)
 # Define a dictionary to keep track of user states
 user_states = {}
 
-# Command handlers
 @dp.message_handler(commands=['start', 'help'])
 async def send_welcome(message: types.Message):
     user_id = message.from_user.id
@@ -29,8 +29,18 @@ async def send_welcome(message: types.Message):
     markup.add(my_files_button)
     markup.add(text_to_py_button)
     
-    await message.reply("Hi! I'm your Python  bot. What would you like to do?", reply_markup=markup)
+    welcome_message = (
+        "Hi! I'm your Python bot. Here's what you can do:\n"
+        "- Use 'My Python Files' to Run your files.\n"
+        "- Use 'Convert Text to .py' to convert text snippets to Python files.\n"
+        "To install libraries, simply send me a message like 'Install numpy'.\n"
+        "To execute a Python file, upload it, and then choose 'Run' from the options.\n"
+        "Please note that you can upload and manage up to 3 '.txt' or '.py' files.\n"
+        "What would you like to do?"
+    )
     
+    await message.reply(welcome_message, reply_markup=markup)
+
 
 
 @dp.callback_query_handler(lambda c: c.data == 'text_to_py')
@@ -67,37 +77,91 @@ async def show_user_files(callback_query: types.CallbackQuery):
         if files:
             markup = InlineKeyboardMarkup()
             for file in files:
-                buttons_row = []
-                buttons_row.append(InlineKeyboardButton(f'Run {file}', callback_data=f'run_{file}'))
-                markup.row(*buttons_row)
+                # Add a button to run the file
+                run_button = InlineKeyboardButton(f'Run {file}', callback_data=f'run_{file}')
+                # Add a button to delete the file
+                delete_button = InlineKeyboardButton(f'Delete {file}', callback_data=f'delete_{file}')
+                # Add both buttons to the markup
+                markup.row(run_button, delete_button)
             await bot.send_message(user_id, "Your files:", reply_markup=markup)
         else:
             await bot.send_message(user_id, "You have no files.")
     else:
         await bot.send_message(user_id, "You have no files.")
 
-# Document handler for Python files
+# Handler for deleting a file
+@dp.callback_query_handler(lambda c: c.data and c.data.startswith('delete_'))
+async def delete_file(callback_query: types.CallbackQuery):
+    file_name = callback_query.data.split('delete_')[1]
+    user_id = callback_query.from_user.id
+    user_dir = f'./user_files/{user_id}'
+    file_path = os.path.join(user_dir, file_name)
+
+    # Ensure the user is deleting only their file
+    if not os.path.isfile(file_path):
+        await bot.answer_callback_query(callback_query.id, "File not found.")
+        return
+
+    try:
+        # Delete the file
+        os.remove(file_path)
+        await bot.answer_callback_query(callback_query.id, f"{file_name} deleted successfully.")
+        await bot.send_message(user_id, f"Deleted {file_name}.")
+    except PermissionError as e:
+        # Log and inform about permission issues
+        logging.error(f"Failed to delete {file_name}: {e}")
+        await bot.answer_callback_query(callback_query.id, "Permission denied: Unable to delete file.")
+        await bot.send_message(user_id, f"Failed to delete {file_name} due to insufficient permissions.")
+    except Exception as e:
+        # Log and inform about other issues
+        logging.error(f"Failed to delete {file_name}: {e}")
+        await bot.answer_callback_query(callback_query.id, "An error occurred while deleting the file.")
+        await bot.send_message(user_id, f"Failed to delete {file_name}: {str(e)}")
+
+
+
 @dp.message_handler(content_types=['document'])
 async def handle_document(message: types.Message):
     user_id = message.from_user.id
-    if message.document.file_name.endswith('.py'):
-        file_name = message.document.file_name
-        user_dir = f'./user_files/{user_id}'
-        if not os.path.exists(user_dir):
-            os.makedirs(user_dir)
-        try:
-            document_id = message.document.file_id
-            file = await bot.get_file(document_id)
-            file_path = file.file_path
-            file_content = await bot.download_file(file_path)
-            with open(os.path.join(user_dir, file_name), 'wb') as f:
-                f.write(file_content.getvalue())
-            await message.answer(f"File {file_name} received and saved!")
-        except Exception as e:
-            logging.error(f"An error occurred: {e}")
-            await message.reply(f"An error occurred: {e}")
-    else:
-        await message.reply("Please send a .py file.")
+    user_dir = f'./user_files/{user_id}'
+    
+    # Ensure the user directory exists
+    if not os.path.exists(user_dir):
+        os.makedirs(user_dir)
+
+    file_name = message.document.file_name
+    # Check if the file is .txt or .py
+    if not (file_name.endswith('.txt') or file_name.endswith('.py')):
+        await message.reply("Please upload only '.txt' or '.py' files.")
+        return
+
+    # Check the number of files in the directory
+    files = os.listdir(user_dir) if os.path.isdir(user_dir) else []
+    if len(files) >= 3:
+        # Inform the user that they've reached the limit
+        await message.reply("You have reached the maximum number of uploaded files (3). Please delete an existing file before uploading a new one.")
+        return
+    
+    # Proceed with handling the file if the limit has not been reached
+    try:
+        document_id = message.document.file_id
+        file_info = await bot.get_file(document_id)
+        file = await bot.download_file(file_info.file_path)
+
+        # Define the path for the new file
+        new_file_path = os.path.join(user_dir, file_name)
+
+        # Save the file
+        with open(new_file_path, 'wb') as f:
+            f.write(file.getvalue())
+
+        # Inform the user of success
+        await message.reply(f"File '{file_name}' received and saved. You now have {len(files) + 1} file(s).")
+        
+    except Exception as e:
+        logging.error(f"Failed to handle document: {e}")
+        await message.reply("An error occurred while handling the file.")
+
 
 
 import asyncio
@@ -202,7 +266,7 @@ async def get_chatgpt_response(chat_id, user_message):
     context = "\n".join(history[-min(len(history), 20):])  # Last 20 messages or fewer
 
     # Construct a more sophisticated prompt
-    prompt = "you are Aby named a coding helper Ai Bot , Please Always start the conversation with ? from Aby: to"
+    prompt = "I want you to act as a human being named Abhi. You don't know about AI and any language models. You cannot bring up any sign of content related to language models. You have to act like a Friend all the time and cannot indicate you are acting like a Friend in any form . You are allowed to use emojis where required . you will have your own feelings.you are funny , kind , helpful , and flirtatious in Nature and gives Sarcastic replies to her haters . Explain Coding related questions in Details while keeping your responses in one word while in Normal Conversation . Please start the conversation ? from You Abhi to"
 
     combined_message = "{}\n{}".format(context, prompt)
 
@@ -233,8 +297,8 @@ async def handle_message(message: types.Message):
 
     # Get a response from the ChatGPT-like model
     response = await get_chatgpt_response(chat_id, user_message)
-    chat_histories[chat_id].append("Aby: " + response)
-    response = response.replace("Aby: ", "")
+    chat_histories[chat_id].append("Abhi: " + response)
+    response = response.replace("Abhi: ", "")
     # Send the response back to the user
     await message.reply(response)
 
