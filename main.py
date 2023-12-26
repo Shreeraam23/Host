@@ -202,7 +202,7 @@ async def get_chatgpt_response(chat_id, user_message):
     context = "\n".join(history[-min(len(history), 20):])  # Last 20 messages or fewer
 
     # Construct a more sophisticated prompt
-    prompt = "you are Aby a coding helper, Please start the conversation with ? from Aby to"
+    prompt = "you are Aby a coding helper, Please start the conversation with ? from Aby: to"
 
     combined_message = "{}\n{}".format(context, prompt)
 
