@@ -29,7 +29,7 @@ async def send_welcome(message: types.Message):
     markup.add(my_files_button)
     markup.add(text_to_py_button)
     
-    await message.reply("Hi! I'm your Python  bot. What would you like to do?", reply_markup=markup)
+    await message.reply("Hi! I'm your Python Assistant bot. What would you like to do?", reply_markup=markup)
     
 
 
@@ -203,9 +203,14 @@ async def get_chatgpt_response(chat_id, user_message):
 
     # Construct a more sophisticated prompt
     prompt = (
-        "The following is a conversation with a helpful assistant. The assistant is "
-        "attentive, creative, clever, and very friendly.\n\n"  # Describing the assistant's characteristics
-        "User: {}\nAssistant:".format(user_message)  # User's current message
+        "Hi! I'm your Python bot, here to assist with Python code execution and file management. \n"
+        "You can use me to convert text snippets into .py files, run Python scripts, and manage your files.\n\n"
+        "Here are some things you can do:\n"
+        "- Click on 'My Python Files' to view or run your saved scripts.\n"
+        "- Click on 'Convert Text to .py' to send me a text snippet to convert into a Python file.\n"
+        "- Send me a .py file directly, and I'll save it for you.\n"
+        "- Type 'Install [library name]' to install Python libraries for your scripts.\n\n"
+        "How can I assist you today?"
     )
     combined_message = "{}\n{}".format(context, prompt)
 
