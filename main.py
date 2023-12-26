@@ -202,8 +202,8 @@ async def get_chatgpt_response(chat_id, user_message):
     context = "\n".join(history[-min(len(history), 20):])  # Last 20 messages or fewer
 
     # Construct a more sophisticated prompt
-    prompt = (
-        "Hi! I'm your Python bot, here to assist with Python code execution and file management. \n"
+    PROMPT = (
+        "Hi! I'm your Python Assistant bot, here to assist with Python code execution and file management. \n"
         "You can use me to convert text snippets into .py files, run Python scripts, and manage your files.\n\n"
         "Here are some things you can do:\n"
         "- Click on 'My Python Files' to view or run your saved scripts.\n"
@@ -212,12 +212,17 @@ async def get_chatgpt_response(chat_id, user_message):
         "- Type 'Install [library name]' to install Python libraries for your scripts.\n\n"
         "How can I assist you today?"
     )
-    combined_message = "{}\n{}".format(context, prompt)
+    combined_message = "{}\n{}".format(context, PROMPT)
 
-    async with aiohttp.ClientSession() as session:
+    async def get_chatgpt_response(chat_id, user_message):
+       history = chat_histories.get(chat_id, [])
+       combined_message = "\n".join(history[-20:])
+       combined_message = PROMPT + user_message + "\n" + combined_message
+       async with aiohttp.ClientSession() as session:
         async with session.get(API_ENDPOINT, params={'question': combined_message}) as response:
             if response.status == 200:
                 response_text = await response.text()
+                # Assuming your response contains JSON data within plain text, you can parse it manually.
                 try:
                     data = json.loads(response_text)
                     return data.get('answer', 'Sorry, I could not process your request.')
@@ -227,25 +232,24 @@ async def get_chatgpt_response(chat_id, user_message):
                 return 'Error: Failed to get response from the server.'
 
 
-# Modify the existing message handler to interact with ChatGPT
-@dp.message_handler()
-async def handle_message(message: types.Message):
-    chat_id = message.chat.id
-    user_message = message.text
 
-    # Update the chat history
-    if chat_id in chat_histories:
-        chat_histories[chat_id].append("User: " + user_message)
-    else:
-        chat_histories[chat_id] = ["User: " + user_message]
+    @dp.message_handler()
+    async def handle_message(message: types.Message):
+     chat_id = message.chat.id
+     user_message = message.text
+     user_id = message.from_user.id  # Get the user's ID
 
-    # Get a response from the ChatGPT-like model
-    response = await get_chatgpt_response(chat_id, user_message)
-    chat_histories[chat_id].append("Bot: " + response)
+     if chat_id in chat_histories:
+         chat_histories[chat_id].append("User: " + user_message)
+     else:
+         chat_histories[chat_id] = ["User: " + user_message]
 
-    # Send the response back to the user
-    await message.reply(response)
+     response = await get_chatgpt_response(chat_id, user_message)
+     chat_histories[chat_id].append("Eva: " + response)
+    
+     response = response.replace("Eva: ", "")
 
+     await message.reply(response)
 
 
 ##############################################################################
