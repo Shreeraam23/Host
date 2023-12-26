@@ -1,6 +1,6 @@
 
 # Initialize bot and dispatcher
-TOKEN='6799036771:AAGCL103U-8FV3c'
+TOKEN='6799036771:AAHEjzGXpAeFitUTLfoh6_7O3uLoivIQnU4'
 #import logging
 import os
 import subprocess
