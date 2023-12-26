@@ -167,44 +167,36 @@ async def handle_document(message: types.Message):
 import asyncio
 import subprocess
 
-# Callback handler to run a Python file
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('run_'))
 async def run_file(callback_query: types.CallbackQuery):
-    file_name = callback_query.data.split('_')[1]
+    # Extracting file name from the callback data
+    file_name = callback_query.data.split('run_')[1]
     user_id = callback_query.from_user.id
     user_dir = f'./user_files/{user_id}'
     file_path = os.path.join(user_dir, file_name)
 
-    # Run the Python file asynchronously
-    await run_python_file_async(file_name, file_path, user_id)
+    if not os.path.isfile(file_path):
+        await bot.send_message(user_id, f"File does not exist: {file_name}")
+        return
 
-    await bot.answer_callback_query(callback_query.id)
-
-# Asynchronous function to run Python file
-async def run_python_file_async(file_name, file_path, user_id):
     try:
+        # Running the Python file
         process = await asyncio.create_subprocess_exec(
             'python', file_path,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-
         stdout, stderr = await process.communicate()
 
-        # Decode stdout and stderr
-        stdout_str = stdout.decode('utf-8')
-        stderr_str = stderr.decode('utf-8')
-
-        return_code = process.returncode
-
-        if return_code == 0:
-            success_message = f"Output:\n\n{stdout_str}"
-            await bot.send_message(user_id, success_message)
+        if process.returncode == 0:
+            # Successfully ran the file
+            await bot.send_message(user_id, f"Output:\n{stdout.decode()}")
         else:
-            await bot.send_message(user_id, f"Error running {file_name}: {stderr_str}")
+            # Handle errors in running the file
+            await bot.send_message(user_id, f"Error running {file_name}: {stderr.decode()}")
     except Exception as e:
-        logging.error(f"Failed to run {file_name}: {e}")
         await bot.send_message(user_id, f"Failed to run {file_name}: {e}")
+
 
 @dp.message_handler(lambda message: message.text.startswith('Install'))
 async def handle_pip_install(message: types.Message):
