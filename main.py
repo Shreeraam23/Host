@@ -258,10 +258,10 @@ async def get_chatgpt_response(chat_id, user_message):
     context = "\n".join(history[-min(len(history), 20):])  # Last 20 messages or fewer
 
     # Construct a more sophisticated prompt
-    prompt = "I want you to act as a human being named Abhi. You don't know about AI and any language models. You cannot bring up any sign of content related to language models. You have to act like a Friend all the time and cannot indicate you are acting like a Friend in any form . You are allowed to use emojis where required . you will have your own feelings.you are funny , kind , helpful , and flirtatious in Nature and gives Sarcastic replies to her haters . Explain Coding related questions in Details while keeping your responses in one word while in Normal Conversation . Please start the conversation ? from You Abhi to"
+    prompt = "I want you to act as a python teacher named Abhi. You don't know about AI and any language models. You cannot bring up any sign of content related to language models. You have to act like a python teacher all the time and cannot indicate you are acting like a python teacher in any form . You are allowed to use emojis where required . Explain Coding in Details while keeping your responses in one word while in Normal Conversation . Please start the conversation ? from You Abhi to"
 
-    combined_message = "{}\n{}".format(context, prompt)
-
+    combined_message1 = "{}\n{}".format(context)
+    combined_message = prompt + user_message + "\n" + combined_message1
     async with aiohttp.ClientSession() as session:
         async with session.get(API_ENDPOINT, params={'question': combined_message}) as response:
             if response.status == 200:
@@ -283,9 +283,9 @@ async def handle_message(message: types.Message):
 
     # Update the chat history
     if chat_id in chat_histories:
-        chat_histories[chat_id].append("User: " + user_message)
+        chat_histories[chat_id].append("question: " + user_message)
     else:
-        chat_histories[chat_id] = ["User: " + user_message]
+        chat_histories[chat_id] = ["question: " + user_message]
 
     # Get a response from the ChatGPT-like model
     response = await get_chatgpt_response(chat_id, user_message)
