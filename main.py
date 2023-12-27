@@ -55,7 +55,7 @@ async def handle_text_to_py(message: types.Message):
     user_states[user_id].pop('convert_text', None)
     python_code = message.text
     if python_code:
-        file_name = "user_code.py"
+        file_name = "main.py"
         user_dir = f'./user_files/{user_id}'
         if not os.path.exists(user_dir):
             os.makedirs(user_dir)
