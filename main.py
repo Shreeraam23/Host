@@ -1,7 +1,7 @@
 
 # Initialize bot and dispatcher
 TOKEN='6799036771:AAHEjzGXpAeFitUTLfoh6_7O3uLoivIQnU4'
-
+from aiogram import types
 #import logging
 import os
 import subprocess
@@ -260,8 +260,7 @@ async def get_chatgpt_response(chat_id, user_message):
     # Construct a more sophisticated prompt
     prompt = "I want you to act as a python teacher named Abhi. You don't know about AI and any language models. You cannot bring up any sign of content related to language models. You have to act like a python teacher all the time and cannot indicate you are acting like a python teacher in any form . You are allowed to use emojis where required . Explain Coding in Details while keeping your responses in one word while in Normal Conversation . Please start the conversation ? from You Abhi to"
 
-    combined_message1 = "{}\n{}".format(context)
-    combined_message = prompt + user_message + "\n" + combined_message1
+    combined_message = "{}\n{}".format(prompt,context)
     async with aiohttp.ClientSession() as session:
         async with session.get(API_ENDPOINT, params={'question': combined_message}) as response:
             if response.status == 200:
@@ -280,12 +279,12 @@ async def get_chatgpt_response(chat_id, user_message):
 async def handle_message(message: types.Message):
     chat_id = message.chat.id
     user_message = message.text
-
+    await bot.send_chat_action(chat_id, types.ChatActions.TYPING)
     # Update the chat history
     if chat_id in chat_histories:
-        chat_histories[chat_id].append("question: " + user_message)
+        chat_histories[chat_id].append("User: " + user_message)
     else:
-        chat_histories[chat_id] = ["question: " + user_message]
+        chat_histories[chat_id] = ["User: " + user_message]
 
     # Get a response from the ChatGPT-like model
     response = await get_chatgpt_response(chat_id, user_message)
