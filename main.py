@@ -17,29 +17,48 @@ dp = Dispatcher(bot)
 # Define a dictionary to keep track of user states
 user_states = {}
 
-@dp.message_handler(commands=['start', 'help'])
+from aiogram import types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ChatMember
+
+CHANNEL_USERNAME = '@abhibots'  # Replace with the actual username of the channel
+@dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     user_id = message.from_user.id
-    user_states[user_id] = {}
-    markup = InlineKeyboardMarkup()
-    
-    my_files_button = InlineKeyboardButton("My Python Files", callback_data='my_files')
-    text_to_py_button = InlineKeyboardButton("Convert Text to .py", callback_data='text_to_py')
-    
-    markup.add(my_files_button)
-    markup.add(text_to_py_button)
-    
-    welcome_message = (
-        "Hi! I'm your Python bot. Here's what you can do:\n"
-        "- Use 'My Python Files' to Run your files.\n"
-        "- Use 'Convert Text to .py' to convert text snippets to Python files.\n"
-        "To install libraries, simply send me a message like 'Install numpy'.\n"
-        "To execute a Python file, upload it, and then choose 'Run' from the options.\n"
-        "Please note that you can upload and manage up to 3 '.txt' or '.py' files.\n"
-        "What would you like to do?"
-    )
-    
-    await message.reply(welcome_message, reply_markup=markup)
+
+    # Check if the user is a member of the channel
+    try:
+        user_status = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+    except Exception as e:
+        logging.error(f"Error checking user membership: {e}")
+        await message.reply("Sorry, I'm having trouble verifying your membership status.")
+        return
+
+    # Proceed only if the user is a member of the channel
+    if user_status.status in ['member', 'administrator', 'creator']:
+        # User is a member, proceed with the welcome message and rest of the /start functionality
+        user_states[user_id] = {}
+        markup = InlineKeyboardMarkup()
+        
+        my_files_button = InlineKeyboardButton("My Python Files", callback_data='my_files')
+        text_to_py_button = InlineKeyboardButton("Convert Text to .py", callback_data='text_to_py')
+        
+        markup.add(my_files_button)
+        markup.add(text_to_py_button)
+        
+        welcome_message = (
+            "Hi! I'm your Python bot. Here's what you can do:\n"
+            "- Use 'My Python Files' to Run your files.\n"
+            "- Use 'Convert Text to .py' to convert text snippets to Python files.\n"
+            "To install libraries, simply send me a message like 'Install numpy'.\n"
+            "To execute a Python file, upload it, and then choose 'Run' from the options.\n"
+            "Please note that you can upload and manage up to 3 '.txt' or '.py' files.\n"
+            "What would you like to do?"
+        )
+        
+        await message.reply(welcome_message, reply_markup=markup)
+    else:
+        # User is not a member, inform them
+        await message.reply(f"To use this bot, please join {CHANNEL_USERNAME}.")
 
 
 
