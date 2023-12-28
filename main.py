@@ -162,7 +162,22 @@ async def handle_document(message: types.Message):
         logging.error(f"Failed to handle document: {e}")
         await message.reply("An error occurred while handling the file.")
 
+OWNER_ID = '890382857'  # Replace with the actual owner ID
 
+@dp.message_handler(commands=['countbots'])
+async def count_bots(message: types.Message):
+    # Check if the user is the owner
+    if str(message.from_user.id) == OWNER_ID:
+        # Assuming each bot's data is in a unique directory under './user_files/'
+        base_directory = './user_files/'
+        try:
+            # Count the number of directories in the base directory
+            bot_count = sum(os.path.isdir(os.path.join(base_directory, i)) for i in os.listdir(base_directory))
+            await message.reply(f"Currently, there are {bot_count} bots hosted.")
+        except Exception as e:
+            await message.reply(f"An error occurred: {str(e)}")
+    else:
+        await message.reply("You are not authorized to use this command.")
 
 import asyncio
 import subprocess
@@ -207,6 +222,7 @@ async def handle_pip_install(message: types.Message):
         await install_library(library, message.from_user.id)
     except ValueError:
         await message.reply("Please provide a valid library name.")
+
 
 import subprocess
 import shlex
