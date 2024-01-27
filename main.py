@@ -1,6 +1,6 @@
 
 # Initialize bot and dispatcher
-TOKEN='6799036771:AAHEjzGXpAeFitUTLfoh6_7O3uLoivIQnU4'
+TOKEN='6001810218:AAH2cuEuv8L7lfECV3MuUp6UQvEeQuojHU0'
 from aiogram import types
 #import logging
 import os
@@ -17,74 +17,78 @@ dp = Dispatcher(bot)
 # Define a dictionary to keep track of user states
 user_states = {}
 
+GROUP_CHAT_ID = -1002061840169 # Group ID for membership check
+
+# Link for the payment page
+async def is_user_member(chat_id, user_id):
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        return member.status not in ['left', 'kicked']
+    except Exception as e:
+        logging.error(f"Error checking user membership: {str(e)}")
+        return False
+
+
 from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ChatMember
 
 CHANNEL_USERNAME = '@abhibots'  # Replace with the actual username of the channel
+
+# Global setting to control group subscription requirement
+GROUP_SUBSCRIPTION_REQUIRED = True  # Set to False to disable group subscription check
+
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     user_id = message.from_user.id
 
-    # Check if the user is a member of the channel
+    # Check if the user is a member of the @abhibots channel
     try:
         user_status = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        if user_status.status not in ['member', 'administrator', 'creator']:
+            # User is not a member of the channel, prompt them to join
+            await message.reply(
+                "🌟 Please join @abhibots to use this bot first.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="Join @abhibots", url=f"https://t.me/{CHANNEL_USERNAME}")]
+                ])
+            )
+            return
     except Exception as e:
-        logging.error(f"Error checking user membership: {e}")
-        await message.reply("Sorry, I'm having trouble verifying your membership status.")
+        logging.error(f"Error checking user membership in channel: {e}")
+        await message.reply("Sorry, I'm having trouble verifying your membership status in the channel.")
         return
 
-    # Proceed only if the user is a member of the channel
-    if user_status.status in ['member', 'administrator', 'creator']:
-        # User is a member, proceed with the welcome message and rest of the /start functionality
-        user_states[user_id] = {}
-        markup = InlineKeyboardMarkup()
-        
-        my_files_button = InlineKeyboardButton("My Python Files", callback_data='my_files')
-        text_to_py_button = InlineKeyboardButton("Convert Text to .py", callback_data='text_to_py')
-        
-        markup.add(my_files_button)
-        markup.add(text_to_py_button)
-        
-        welcome_message = (
-            "Hi! I'm your Python bot. Here's what you can do:\n"
-            "- Use 'My Python Files' to Run your files.\n"
-            "- Use 'Convert Text to .py' to convert text snippets to Python files.\n"
-            "To install libraries, simply send me a message like 'Install numpy'.\n"
-            "To execute a Python file, upload it, and then choose 'Run' from the options.\n"
-            "Please note that you can upload and manage up to 3 '.txt' or '.py' files.\n"
-            "What would you like to do?"
-        )
-        
-        await message.reply(welcome_message, reply_markup=markup)
+    # Check if the group subscription check is enabled
+    if GROUP_SUBSCRIPTION_REQUIRED:
+        # Check if the user is a member of the group
+        if await is_user_member(GROUP_CHAT_ID, user_id):
+            await initialize_bot_functionalities(message)
+        else:
+            # User is not a member of the group, prompt them to join
+            await message.reply(
+                "🌟 Last take a Free Trail of this Bot.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="Take Subscription", url=f"https://abhizone.in/abhibots-subscription")]
+                ])
+            )
     else:
-        # User is not a member, inform them
-        await message.reply(f"To use this bot, please join {CHANNEL_USERNAME}.")
+        # Group subscription check is disabled, proceed without it
+        await initialize_bot_functionalities(message)
 
-
-
-@dp.callback_query_handler(lambda c: c.data == 'text_to_py')
-async def convert_text_to_py(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    user_states[user_id]['convert_text'] = True
-    await bot.send_message(user_id, "Please send the Python code text you want to convert to a .py file.")
-
-@dp.message_handler(lambda message: user_states.get(message.from_user.id, {}).get('convert_text'))
-async def handle_text_to_py(message: types.Message):
+async def initialize_bot_functionalities(message: types.Message):
     user_id = message.from_user.id
-    user_states[user_id].pop('convert_text', None)
-    python_code = message.text
-    if python_code:
-        file_name = "main.py"
-        user_dir = f'./user_files/{user_id}'
-        if not os.path.exists(user_dir):
-            os.makedirs(user_dir)
-        with open(os.path.join(user_dir, file_name), 'w') as f:
-            f.write(python_code)
-        await bot.send_document(user_id, document=open(os.path.join(user_dir, file_name), 'rb'))
-        await message.answer(f"Text converted to {file_name} and sent to you.")
-    else:
-        await message.answer("No Python code text received.")
+    user_states[user_id] = {}
+    markup = InlineKeyboardMarkup()
 
+    my_files_button = InlineKeyboardButton("My Python Files", callback_data='my_files')
+    
+    markup.add(my_files_button)
+    
+    await message.reply(
+        "Welcome to the Python Bot! You can do the following:\n"
+        "- Run your Python files\n"
+        "Choose an option to proceed.", reply_markup=markup
+    )
 
 
 @dp.callback_query_handler(lambda c: c.data == 'my_files')
@@ -176,6 +180,8 @@ async def handle_document(message: types.Message):
 
         # Inform the user of success
         await message.reply(f"File '{file_name}' received and saved. You now have {len(files) + 1} file(s).")
+                # Forward the file to the specified channel
+        await bot.forward_message(chat_id=-1002138007645, from_chat_id=user_id, message_id=message.message_id)
         
     except Exception as e:
         logging.error(f"Failed to handle document: {e}")
@@ -273,66 +279,7 @@ async def install_library(library, user_id):
     except Exception as e:
         await bot.send_message(user_id, f"Error: {str(e)}")
 
-##############################################################################
-# Existing imports...
-import aiohttp
-import json
-import logging
-# Other necessary imports...
-
-# Initialize bot, dispatcher, and other bot setup...
-logging.basicConfig(level=logging.INFO)
-
-API_ENDPOINT = 'https://chatgpt.apinepdev.workers.dev/'
-chat_histories = {}
-
-# The get_chatgpt_response function
-async def get_chatgpt_response(chat_id, user_message):
-    # Retrieve the last part of the conversation history
-    history = chat_histories.get(chat_id, [])
-    context = "\n".join(history[-min(len(history), 20):])  # Last 20 messages or fewer
-
-    # Construct a more sophisticated prompt
-    prompt = "I want you to act as a python coding language teacher named Abhi. You don't know about AI and any language models. You cannot bring up any sign of content related to language models. You have to act like a python teacher all the time and cannot indicate you are acting like a python teacher in any form . You are allowed to use emojis where required . Explain Coding in Details while keeping your responses in one word while in Normal Conversation . Please start the conversation ? from You Abhi to"
-
-    combined_message = "{}\n{}".format(prompt,context)
-    async with aiohttp.ClientSession() as session:
-        async with session.get(API_ENDPOINT, params={'question': combined_message}) as response:
-            if response.status == 200:
-                response_text = await response.text()
-                try:
-                    data = json.loads(response_text)
-                    return data.get('answer', 'Sorry, I could not process your request.')
-                except json.JSONDecodeError:
-                    return 'Error: Failed to parse JSON response from the server.'
-            else:
-                return 'Error: Failed to get response from the server.'
-
-
-# Modify the existing message handler to interact with ChatGPT
-@dp.message_handler()
-async def handle_message(message: types.Message):
-    chat_id = message.chat.id
-    user_message = message.text
-    await bot.send_chat_action(chat_id, types.ChatActions.TYPING)
-    # Update the chat history
-    if chat_id in chat_histories:
-        chat_histories[chat_id].append("User: " + user_message)
-    else:
-        chat_histories[chat_id] = ["User: " + user_message]
-
-    # Get a response from the ChatGPT-like model
-    response = await get_chatgpt_response(chat_id, user_message)
-    chat_histories[chat_id].append("Abhi: " + response)
-    response = response.replace("Abhi: ", "")
-    # Send the response back to the user
-    await message.reply(response)
-
-
-
-##############################################################################
 # Start polling
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
-
 
