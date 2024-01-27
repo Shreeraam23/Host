@@ -1,6 +1,6 @@
 
 # Initialize bot and dispatcher
-TOKEN='6001810218:AAH2cuEuv8L7lfECV3MuUp6UQvEeQuojHU0'
+TOKEN='6799036771:AAHEjzGXpAeFitUTLfoh6_7O3uLoivIQnU4'
 from aiogram import types
 #import logging
 import os
