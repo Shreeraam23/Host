@@ -160,7 +160,7 @@ async def handle_document(message: types.Message):
 
     # Check the number of files in the directory
     files = os.listdir(user_dir) if os.path.isdir(user_dir) else []
-    if len(files) >= 3:
+    if len(files) >= 10:
         # Inform the user that they've reached the limit
         await message.reply("You have reached the maximum number of uploaded files (3). Please delete an existing file before uploading a new one.")
         return
