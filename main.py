@@ -636,6 +636,20 @@ def list_all_users(message):
     user_ids = [uid for uid in user_dirs if uid.isdigit()]
     bot.send_message(user_id, f"📋 Current users: {', '.join(user_ids)}")
 
+MAX_MESSAGE_LENGTH = 4000  # Telegram's maximum message length
+
+def send_error_message(user_id, file_name, error_message):
+    if len(error_message) > MAX_MESSAGE_LENGTH:
+        # Send as a file
+        with open(f"{file_name}_error.txt", 'w') as f:
+            f.write(error_message)
+        with open(f"{file_name}_error.txt", 'rb') as f:
+            bot.send_document(user_id, f, caption=f"🚫 Error in [{file_name}]")
+        os.remove(f"{file_name}_error.txt")
+    else:
+        bot.send_message(user_id, f"🚫 Error in [{file_name}]:\n```\n{error_message}\n```", parse_mode='Markdown')
+
+
 if __name__ == '__main__':
     # Start the membership checker thread
     threading.Thread(target=membership_checker, daemon=True).start()
