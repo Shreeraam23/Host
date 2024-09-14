@@ -7,6 +7,10 @@ import logging
 import os
 import subprocess
 import threading
+import time
+import logging
+import threading
+import time
 
 
 bot = telebot.TeleBot(TOKEN)
@@ -16,11 +20,10 @@ logging.basicConfig(level=logging.INFO)
 
 running_processes = {}  # Key: user_id, Value: dict of {file_name: subprocess.Popen}
 process_locks = {}      # Key: user_id, Value: threading.Lock object
-
+# New data structure to track script start times and timers
+script_timers = {}  # Key: user_id, Value: dict of {file_name: timer_thread}
 # Dictionaries to keep track of user states and running processes
 user_states = {}
-running_processes = {}  # Key: user_id, Value: subprocess.Popen object
-process_locks = {}      # Key: user_id, Value: threading.Lock object
 
 GROUP_CHAT_ID = -1002061840169  # Group ID for membership check
 CHANNEL_USERNAME = '@abhibots'  # Replace with the actual username of the channel
@@ -74,7 +77,6 @@ def is_user_member(chat_id, user_id):
     except Exception as e:
         logging.error(f"Error checking user membership: {str(e)}")
         return False
-
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
@@ -99,13 +101,53 @@ def send_welcome(message):
         if is_user_member(GROUP_CHAT_ID, user_id):
             initialize_bot_functionalities(message)
         else:
-            # User is not a member of the group, prompt them to join
+            # User is not a member of the group, prompt them to subscribe
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton(text="💳 Take Subscription", url="https://your_subscription_link.com"))
+            markup.add(types.InlineKeyboardButton(text="💳 Take Subscription", url="https://cosmofeed.com/vig/65aabbd785e8b0001e14fe31"))
             bot.send_message(user_id, "🌟 Please subscribe to use this bot.", reply_markup=markup)
     else:
         # Group subscription check is disabled, proceed without it
         initialize_bot_functionalities(message)
+
+
+def membership_checker():
+    while True:
+        try:
+            users_with_scripts = list(running_processes.keys())
+            for user_id in users_with_scripts:
+                # Check if the user is still a member of the group
+                if not is_user_member(GROUP_CHAT_ID, user_id):
+                    logging.info(f"User {user_id} is no longer a member of the group. Stopping their scripts.")
+                    # Stop all scripts for this user
+                    stop_all_scripts_for_user(user_id)
+                    # Optionally, send a message to the user
+                    bot.send_message(user_id, "🛑 Your subscription has ended. All your scripts have been stopped.")
+            time.sleep(300)  # Check every 5 minutes
+        except Exception as e:
+            logging.error(f"Error in membership_checker: {e}")
+            time.sleep(300)  # Wait before retrying
+
+
+def stop_all_scripts_for_user(user_id):
+    if user_id not in running_processes or not running_processes[user_id]:
+        return  # No scripts to stop
+
+    with process_locks[user_id]:
+        for file_name in list(running_processes[user_id].keys()):
+            process = running_processes[user_id][file_name]
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            del running_processes[user_id][file_name]
+
+        # Clean up if no more scripts are running
+        if not running_processes[user_id]:
+            del running_processes[user_id]
+            del process_locks[user_id]
+
 
 def initialize_bot_functionalities(message):
     user_id = message.from_user.id
@@ -113,16 +155,40 @@ def initialize_bot_functionalities(message):
     markup = types.InlineKeyboardMarkup()
 
     my_files_button = types.InlineKeyboardButton("📂 My Python Files", callback_data='my_files')
-    markup.add(my_files_button)
+    help_button = types.InlineKeyboardButton("ℹ️ Help", callback_data='help')
+    markup.add(my_files_button, help_button)
 
     bot.send_message(
         user_id,
-        "👋 Welcome to the Python Bot! You can do the following:\n"
-        "- 🏃‍♂️ Run your Python files\n"
-        "- 📦 Install libraries via requirements.txt\n"
-        "Choose an option to proceed.",
-        reply_markup=markup
+        "👋 **Welcome to the Python Bot!**\n\n"
+        "This bot allows you to upload and run your Python scripts right here on Telegram.\n\n"
+        "Here's how to use it:\n\n"
+        "🔹 **Uploading Files**:\n"
+        "   - Send your `.py` files directly to this chat to upload them.\n"
+        "   - You can also upload a `requirements.txt` file to install necessary libraries.\n\n"
+        "🔹 **Running Scripts**:\n"
+        "   - Use the '📂 My Python Files' button to see your uploaded scripts.\n"
+        "   - Click '▶️ Run' next to a script to execute it.\n"
+        "   - **For Non-Subscribers**:\n"
+        "     - You can run **1** script at a time.\n"
+        "     - Scripts automatically stop after **1 hour**.\n"
+        "   - **For Subscribers**:\n"
+        "     - You can run up to **2** scripts simultaneously.\n"
+        "     - Scripts run indefinitely until you stop them.\n\n"
+        "🔹 **Stopping Scripts**:\n"
+        "   - Send `/stop` to manage your running scripts.\n"
+        "   - You'll be prompted to select which script to stop if multiple are running.\n\n"
+        "🔹 **Installing Libraries**:\n"
+        "   - Use the `pip install` command (e.g., `pip install requests`) to install libraries.\n"
+        "   - Or upload a `requirements.txt` file with a list of libraries to install.\n\n"
+        "🔹 **Help**:\n"
+        "   - Click the '/start' button at any time to view these instructions again.\n\n"
+        "If you have any questions or need assistance, feel free to reach out!",
+        reply_markup=markup,
+        parse_mode='Markdown'
     )
+
+    
 @bot.callback_query_handler(func=lambda call: call.data == 'my_files')
 def show_user_files(call):
     user_id = call.from_user.id
@@ -261,7 +327,6 @@ def install_libraries_from_requirements(libraries, user_id):
         bot.send_message(user_id, f"Installation failed:\n{e}")
     except Exception as e:
         bot.send_message(user_id, f"Error: {str(e)}")
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith('run_'))
 def run_file(call):
     file_name = call.data[len('run_'):]
@@ -279,31 +344,73 @@ def run_file(call):
     env = os.environ.copy()
     env['PYTHONPATH'] = user_lib_dir + os.pathsep + env.get('PYTHONPATH', '')
 
+    # Check if the user is a member of the group
+    is_member = is_user_member(GROUP_CHAT_ID, user_id)
+
     try:
         # Initialize the user's process dictionary and lock if not already done
         if user_id not in running_processes:
             running_processes[user_id] = {}
             process_locks[user_id] = threading.Lock()
-
-        # Start the subprocess
-        process = subprocess.Popen(
-            ['python', file_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            text=True,
-            bufsize=1
-        )
+            script_timers[user_id] = {}
 
         with process_locks[user_id]:
+            running_scripts = running_processes[user_id]
+            script_count = len(running_scripts)
+
+            # Enforce script limits based on group membership
+            if is_member and script_count >= 2:
+                bot.send_message(user_id, "⚠️ You can only run up to 2 scripts simultaneously.")
+                return
+            elif not is_member and script_count >= 1:
+                bot.send_message(user_id, "⚠️ You can only run 1 script at a time. Please stop the running script before starting a new one.")
+                return
+
+            # Start the subprocess
+            process = subprocess.Popen(
+                ['python', file_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                text=True,
+                bufsize=1
+            )
+
             running_processes[user_id][file_name] = process
 
-        bot.send_message(user_id, f"🚀 Running '{file_name}'. Use /stop to stop scripts.")
+            # Start a timer for non-group members
+            if not is_member:
+                timer_thread = threading.Timer(3600, auto_stop_script, args=(user_id, file_name))
+                timer_thread.start()
+                script_timers[user_id][file_name] = timer_thread
 
-        threading.Thread(target=stream_process_output, args=(user_id, file_name, process)).start()
+            bot.send_message(user_id, f"🚀 Running '{file_name}'. Use /stop to manage your scripts.")
+
+            threading.Thread(target=stream_process_output, args=(user_id, file_name, process)).start()
 
     except Exception as e:
         bot.send_message(user_id, f"⚠️ Failed to run {file_name}: {e}")
+
+
+def auto_stop_script(user_id, file_name):
+    with process_locks.get(user_id, threading.Lock()):
+        if user_id in running_processes and file_name in running_processes[user_id]:
+            process = running_processes[user_id][file_name]
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            del running_processes[user_id][file_name]
+            del script_timers[user_id][file_name]
+            if not running_processes[user_id]:
+                del running_processes[user_id]
+                del process_locks[user_id]
+                del script_timers[user_id]
+            # Notify the user
+            bot.send_message(user_id, f"🛑 Your script '{file_name}' has been automatically stopped after 1 hour.")
+
 
 
 def stream_process_output(user_id, file_name, process):
@@ -350,8 +457,8 @@ def stop_user_script(message):
 
 def stop_script(user_id, file_name):
     with process_locks[user_id]:
-        process = running_processes[user_id].get(file_name)
-        if process:
+        if file_name in running_processes[user_id]:
+            process = running_processes[user_id][file_name]
             process.terminate()
             try:
                 process.wait(timeout=5)
@@ -359,9 +466,49 @@ def stop_script(user_id, file_name):
                 process.kill()
                 process.wait()
             del running_processes[user_id][file_name]
+
+            # Cancel any timer if it exists
+            if user_id in script_timers and file_name in script_timers[user_id]:
+                timer = script_timers[user_id][file_name]
+                timer.cancel()
+                del script_timers[user_id][file_name]
+
+            # Clean up if no more scripts are running
             if not running_processes[user_id]:
                 del running_processes[user_id]
                 del process_locks[user_id]
+                if user_id in script_timers:
+                    del script_timers[user_id]
+
+def stop_all_scripts_for_user(user_id):
+    if user_id not in running_processes or not running_processes[user_id]:
+        return  # No scripts to stop
+
+    with process_locks[user_id]:
+        for file_name in list(running_processes[user_id].keys()):
+            process = running_processes[user_id][file_name]
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            del running_processes[user_id][file_name]
+
+            # Cancel timers
+            if user_id in script_timers and file_name in script_timers[user_id]:
+                timer = script_timers[user_id][file_name]
+                timer.cancel()
+                del script_timers[user_id][file_name]
+
+        # Clean up if no more scripts are running
+        if not running_processes[user_id]:
+            del running_processes[user_id]
+            del process_locks[user_id]
+            if user_id in script_timers:
+                del script_timers[user_id]
+
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('stop_'))
 def stop_script_callback(call):
@@ -377,24 +524,38 @@ def stop_script_callback(call):
     bot.answer_callback_query(call.id, f"Script '{file_name}' has been stopped.")
     bot.send_message(user_id, f"🛑 Your script '{file_name}' has been stopped.")
 
-@bot.callback_query_handler(func=lambda call: call.data == 'stop_all')
-def stop_all_scripts_callback(call):
-    user_id = call.from_user.id
-
+def stop_all_scripts_for_user(user_id):
     if user_id not in running_processes or not running_processes[user_id]:
-        bot.answer_callback_query(call.id, "You don't have any running scripts.")
-        return
+        return  # No scripts to stop
 
     with process_locks[user_id]:
         for file_name in list(running_processes[user_id].keys()):
-            stop_script(user_id, file_name)
+            process = running_processes[user_id][file_name]
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            del running_processes[user_id][file_name]
 
-    bot.answer_callback_query(call.id, "All your scripts have been stopped.")
-    bot.send_message(user_id, "🛑 All your scripts have been stopped.")
+            # Cancel timers
+            if user_id in script_timers and file_name in script_timers[user_id]:
+                timer = script_timers[user_id][file_name]
+                timer.cancel()
+                del script_timers[user_id][file_name]
+
+        # Clean up if no more scripts are running
+        if not running_processes[user_id]:
+            del running_processes[user_id]
+            del process_locks[user_id]
+            if user_id in script_timers:
+                del script_timers[user_id]
+
 
 
 # Owner-only command to count bots (ensure OWNER_ID is set correctly)
-OWNER_ID = 'YOUR_TELEGRAM_USER_ID'  # Replace with the actual owner ID
+OWNER_ID = '890382857'  # Replace with the actual owner ID
 
 @bot.message_handler(commands=['countbots'])
 def count_bots(message):
@@ -408,9 +569,11 @@ def count_bots(message):
     else:
         bot.send_message(message.from_user.id, "You are not authorized to use this command.")
 
-# Start polling
 if __name__ == '__main__':
-    import time
+    # Start the membership checker thread
+    threading.Thread(target=membership_checker, daemon=True).start()
+
+    # Start polling
     try:
         bot.polling(none_stop=True)
     except Exception as e:
