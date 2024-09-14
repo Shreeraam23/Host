@@ -181,6 +181,10 @@ def initialize_bot_functionalities(message):
         "🔹 **Installing Libraries**:\n"
         "   - Use the `pip install` command (e.g., `pip install requests`) to install libraries.\n"
         "   - Or upload a `requirements.txt` file with a list of libraries to install.\n\n"
+        "🔹 **Subscription Benefits**:\n"
+        "   - **Run More Scripts**: Subscribers can run up to **2 scripts simultaneously**.\n"
+        "   - **Extended Runtime**: No auto-stop after 1 hour; your scripts run until you stop them.\n"
+        "   - **Priority Support**: Get faster and priority support for any issues or questions.\n"
         "🔹 **Help**:\n"
         "   - Click the '/start' button at any time to view these instructions again.\n\n"
         "If you have any questions or need assistance, feel free to reach out!",
