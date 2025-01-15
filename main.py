@@ -1,6 +1,6 @@
 
 
-TOKEN = '7613298384:AAFR_Rl6yRy8YhHY7w8rdJKGSo-uMCSbAQ8'
+TOKEN = '7317831546:AAFvcGMpo3UduE9eb6y9HFLK7LaRm-Y5DXU'
 
 import telebot
 from telebot import types
