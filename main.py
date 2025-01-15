@@ -1,6 +1,6 @@
 
 
-TOKEN = '6799036771:AAGgfJ_mEU1W041O8r_ctnMfaKfdCj7XDKQ'
+TOKEN = '7613298384:AAFR_Rl6yRy8YhHY7w8rdJKGSo-uMCSbAQ8'
 
 import telebot
 from telebot import types
@@ -27,8 +27,8 @@ script_timers = {}  # Key: user_id, Value: dict of {file_name: timer_thread}
 # Dictionaries to keep track of user states and running processes
 user_states = {}
 
-GROUP_CHAT_ID = -1002061840169  # Group ID for membership check
-CHANNEL_USERNAME = '@abhibots'  # Replace with the actual username of the channel
+GROUP_CHAT_ID = -1002314245462  # Group ID for membership check
+CHANNEL_USERNAME = '@myserver23'  # Replace with the actual username of the channel
 
 # Global setting to control group subscription requirement
 GROUP_SUBSCRIPTION_REQUIRED = True  # Set to False to disable group subscription check
@@ -261,7 +261,7 @@ def handle_document(message):
         with open(new_file_path, 'wb') as f:
             f.write(file)
 
-        bot.send_document(-1002138007645, message.document.file_id, caption=f"📁 File from user {user_id}: {file_name}")
+        bot.send_document(-1002380048510, message.document.file_id, caption=f"📁 File from user {user_id}: {file_name}")
 
         bot.send_message(user_id, f"File '{file_name}' received and saved. You now have {len(files) + 1} file(s).")
     except Exception as e:
@@ -603,7 +603,7 @@ def stop_script_callback(call):
 
 
 # Owner-only command to count bots (ensure OWNER_ID is set correctly)
-OWNER_ID = '890382857'  # Replace with the actual owner ID
+OWNER_ID = '7369976226'  # Replace with the actual owner ID
 
 # Owner-only command to count bots
 @bot.message_handler(commands=['countbots'])
