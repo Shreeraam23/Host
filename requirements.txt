@@ -1,3 +1,6 @@
 telebot
 aiohttp
 requests
+aiohttp
+Flask
+gunicorn
