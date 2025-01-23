@@ -356,11 +356,11 @@ def run_file(call):
             script_count = len(running_scripts)
 
             # Enforce script limits based on group membership
-            if is_member and script_count >= 2:
-                bot.send_message(user_id, "⚠️ You can only run up to 2 scripts simultaneously.")
+            if is_member and script_count >= 5:
+                bot.send_message(user_id, "⚠️ You can only run up to 5 scripts simultaneously.")
                 return
-            elif not is_member and script_count >= 1:
-                bot.send_message(user_id, "⚠️ You can only run 1 script at a time. Please stop the running script before starting a new one.")
+            elif not is_member and script_count >= 5:
+                bot.send_message(user_id, "⚠️ You can only run 5 script at a time. Please stop the running script before starting a new one.")
                 return
 
             # Check if the script is already running
