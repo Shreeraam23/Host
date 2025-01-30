@@ -139,7 +139,7 @@ def initialize_bot_functionalities(message):
     markup = types.InlineKeyboardMarkup()
 
     my_files_button = types.InlineKeyboardButton("📂 My Python Files", callback_data='my_files')
-    help_button = types.InlineKeyboardButton("💳 Take Subscription ", url='https://cosmofeed.com/vig/65aabbd785e8b0001e14fe31')
+    help_button = types.InlineKeyboardButton("💳 Take Subscription ", url='https://t.me/Pre_contact_bot')
     markup.add(my_files_button, help_button)
 
     bot.send_message(
