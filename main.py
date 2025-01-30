@@ -106,7 +106,7 @@ def send_welcome(message):
         else:
             # User is not a member of the group, prompt them to subscribe
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton(text="💳 Take Subscription", url="https://cosmofeed.com/vig/65aabbd785e8b0001e14fe31"))
+            markup.add(types.InlineKeyboardButton(text="💳 Take Subscription", url="https://t.me/Pre_contact_bot"))
             bot.send_message(user_id, "🌟 Please subscribe to use this bot.", reply_markup=markup)
     else:
         # Group subscription check is disabled, proceed without it
