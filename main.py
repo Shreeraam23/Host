@@ -1,6 +1,6 @@
 
 
-TOKEN = '7485042245:AAFTQ_CsrkidHqpSKJYcWpHyguIMk9ZPDmg'
+TOKEN = '7853819959:AAEHvVCg34IK0e54PEk6T56y3kNyUjBdEX8'
 
 import telebot
 from telebot import types
@@ -155,9 +155,9 @@ def initialize_bot_functionalities(message):
         "   - Click '▶️ Run' next to a script to execute it.\n"
         "   - **For Non-Subscribers**:\n"
         "     - You can run **1** script at a time.\n"
-        "     - Scripts automatically stop after **1000 hour**.\n"
+        "     - Scripts automatically stop after **1 hour**.\n"
         "   - **For Subscribers**:\n"
-        "     - You can run up to **5** scripts simultaneously.\n"
+        "     - You can run up to **2** scripts simultaneously.\n"
         "     - Scripts run indefinitely until you stop them.\n\n"
         "🔹 **Stopping Scripts**:\n"
         "   - Send `/stop` to manage your running scripts.\n"
@@ -166,8 +166,8 @@ def initialize_bot_functionalities(message):
         "   - Use the `pip install` command (e.g., `pip install requests`) to install libraries.\n"
         "   - Or upload a `requirements.txt` file with a list of libraries to install.\n\n"
         "🔹 **Subscription Benefits**:\n"
-        "   - **Run More Scripts**: Subscribers can run up to **5 scripts simultaneously**.\n"
-        "   - **Extended Runtime**: No auto-stop after 1000 hour; your scripts run until you stop them.\n"
+        "   - **Run More Scripts**: Subscribers can run up to **2 scripts simultaneously**.\n"
+        "   - **Extended Runtime**: No auto-stop after 1 hour; your scripts run until you stop them.\n"
         "   - **Priority Support**: Get faster and priority support for any issues or questions.\n"
         "🔹 **Help**:\n"
         "   - Click the '/start' button at any time to view these instructions again.\n\n"
@@ -356,11 +356,11 @@ def run_file(call):
             script_count = len(running_scripts)
 
             # Enforce script limits based on group membership
-            if is_member and script_count >= 10:
-                bot.send_message(user_id, "⚠️ You can only run up to 10 scripts simultaneously.")
+            if is_member and script_count >= 5:
+                bot.send_message(user_id, "⚠️ You can only run up to 5 scripts simultaneously.")
                 return
-            elif not is_member and script_count >= 10:
-                bot.send_message(user_id, "⚠️ You can only run 10 script at a time. Please stop the running script before starting a new one.")
+            elif not is_member and script_count >= 5:
+                bot.send_message(user_id, "⚠️ You can only run 5 script at a time. Please stop the running script before starting a new one.")
                 return
 
             # Check if the script is already running
