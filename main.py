@@ -1,670 +1,891 @@
-
-
-TOKEN = '7733327204:AAGJ1Nr8z1ZaSSQR2tOnN_weseydFRjqLxM'
-
 import telebot
 from telebot import types
-import logging
-import os
 import subprocess
-import threading
+import os
+import re
+import sys
+import psutil
+import logging
 import time
+import importlib
+import pip
 import threading
-import time
-import signal
-import platform
+from datetime import datetime, timedelta
+import json
 
-
+TOKEN = '8256340896:AAEFl_DD07RZ9_pYyT9D2AS3RnLabQ_yi9w'
 bot = telebot.TeleBot(TOKEN)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+required_channel = None
 
-running_processes = {}  # Key: user_id, Value: dict of {file_name: subprocess.Popen}
-process_locks = {}      # Key: user_id, Value: threading.Lock object
-# New data structure to track script start times and timers
-script_timers = {}  # Key: user_id, Value: dict of {file_name: timer_thread}
-# Dictionaries to keep track of user states and running processes
-user_states = {}
+bot_scripts = {}
+admin_id = 5462487835 # id
+uploaded_files_dir = "uploaded_files"
+user_uploaded_files_dir = "uploaded_files"
+user_upload_dates = {}  
+upload_dates_file = "upload_dates.json"
+blocked_users_file = "blocked_users.json"
+users_file = 'users.json'
+trusted_users = set()
 
-GROUP_CHAT_ID = -1002314245462  # Group ID for membership check
-CHANNEL_USERNAME = '@myserver23'  # Replace with the actual username of the channel
+def add_user(user_id):
+    users.add(user_id)
+    save_users(users)
 
-# Global setting to control group subscription requirement
-GROUP_SUBSCRIPTION_REQUIRED = True  # Set to False to disable group subscription check
+def remove_user(user_id):
+    users.discard(user_id)
+    save_users(users)
 
+def load_users():
+    if os.path.exists(users_file):
+        with open(users_file, 'r') as file:
+            return set(json.load(file))
+    return set()
 
-@bot.message_handler(func=lambda message: message.text and message.text.lower().startswith('pip install'))
-def handle_pip_install(message):
-    user_id = message.from_user.id
-    user_input = message.text.strip()
-    
-    # Extract the library names
+def save_users(users):
+    with open(users_file, 'w') as file:
+        json.dump(list(users), file)
+
+def load_users():
+    if os.path.exists(users_file):
+        with open(users_file, 'r') as file:
+            return set(json.load(file))  
+    return set()
+
+users = load_users()
+
+def load_trusted_users():
+    if os.path.exists('trusted_users.json'):
+        with open('trusted_users.json', 'r') as file:
+            return set(json.load(file))
+    return set()
+
+def save_trusted_users():
+    with open('trusted_users.json', 'w') as file:
+        json.dump(list(trusted_users), file)
+
+trusted_users.update(load_trusted_users())
+
+unlimited_users = set()
+
+def load_unlimited_subscriptions():
+    if os.path.exists('unlimited_subscriptions.json'):
+        with open('unlimited_subscriptions.json', 'r') as file:
+            return set(json.load(file)) 
+    return set()
+
+def save_unlimited_subscriptions():
+    with open('unlimited_subscriptions.json', 'w') as file:
+        json.dump(list(unlimited_subscriptions), file) 
+
+unlimited_subscriptions = load_unlimited_subscriptions()
+
+def load_upload_dates():
+    if os.path.exists(upload_dates_file):
+        with open(upload_dates_file, 'r') as file:
+            return json.load(file)
+    return {}
+
+def save_upload_dates():
+    with open(upload_dates_file, 'w') as file:
+        json.dump(user_upload_dates, file, default=str)
+
+blocked_users = set()
+
+def load_blocked_users():
+    """Download the list of blocked users from a file."""
+    if os.path.exists('blocked_users.json'):
+        with open('blocked_users.json', 'r') as file:
+            return set(json.load(file)) 
+    return set()
+
+def save_blocked_users():
+    """Save the list of blocked users to a file."""
+    with open('blocked_users.json', 'w') as file:
+        json.dump(list(blocked_users), file)  
+
+blocked_users.update(load_blocked_users())
+
+@bot.message_handler(func=lambda message: message.from_user.id in blocked_users)
+def handle_blocked_user(message):
+    bot.reply_to(message, "You have been banned from using this bot.")
+
+@bot.message_handler(func=lambda message: message.text.isdigit() and message.from_user.id == admin_id)
+def handle_user_action(message):
+    user_id = int(message.text)
+    if message.reply_to_message and message.reply_to_message.text == "Please send the user ID of the user you want to block.":
+        blocked_users.add(user_id)
+        bot.send_message(message.chat.id, f"User has been blocked {user_id} Successfully.")
+    elif message.reply_to_message and message.reply_to_message.text == "Please send the user ID of the user you want to unblock.":
+        blocked_users.discard(user_id)
+        bot.send_message(message.chat.id, f"The user has been unblocked {user_id} Successfully.")
+
+logging.basicConfig(filename='bot_errors.log', level=logging.ERROR)
+
+if not os.path.exists(uploaded_files_dir):
+    os.makedirs(uploaded_files_dir)
+
+state_file = "bot_state.json"
+
+def save_state():
+    with open(state_file, 'w') as file:
+        json.dump(bot_scripts, file, default=str)
+
+def load_state():
+    if os.path.exists(state_file):
+        with open(state_file, 'r') as file:
+            return json.load(file)
+    else:
+        with open(state_file, 'w') as file:
+            json.dump({}, file)
+        return {}
+
+def get_imports(script_path):
+    imports = set()
+    with open(script_path, 'r') as file:
+        for line in file:
+            line = line.strip()
+            if line.startswith('import ') or line.startswith('from '):
+                module = re.split(r'\s+', line.split(' ', 1)[1].strip())[0]
+                imports.add(module.split('.')[0])
+    return imports
+
+def install_packages(packages):
+    for package in packages:
+        try:
+            pip.main(['install', package])
+        except Exception as e:
+            logging.error(f"Error installing package {package}: {e}")
+
+def prepare_script(script_path):
     try:
-        _, libraries = user_input.split('pip install', 1)
-        libraries = libraries.strip().split()
-        if not libraries:
-            bot.send_message(user_id, "Please specify the library name(s) to install.")
-            return
-        install_libraries_from_command(libraries, user_id)
-    except ValueError:
-        bot.send_message(user_id, "Invalid command format. Use: pip install library_name")
-
-def install_libraries_from_command(libraries, user_id):
-    user_lib_dir = f"./user_files/{user_id}/libs"
-
-    # Ensure the directory exists
-    if not os.path.exists(user_lib_dir):
-        os.makedirs(user_lib_dir)
-
-
-    try:
-        # Install all libraries at once
-        subprocess.check_call(
-            ['pip', 'install', '--target', user_lib_dir] + libraries
-        )
-        bot.send_message(user_id, f"Libraries installed successfully: {', '.join(libraries)}")
-    except subprocess.CalledProcessError as e:
-        bot.send_message(user_id, f"Installation failed:\n{e}")
+        imports = get_imports(script_path)
+        install_packages(imports)
     except Exception as e:
-        bot.send_message(user_id, f"Error: {str(e)}")
+        logging.error(f"Error preparing script {script_path}: {e}")
+        
+from telebot import types
 
-
-# List of allowed libraries for installation
-
-def is_user_member(chat_id, user_id):
-    try:
-        member = bot.get_chat_member(chat_id, user_id)
-        return member.status not in ['left', 'kicked']
-    except Exception as e:
-        logging.error(f"Error checking user membership: {str(e)}")
-        return False
-    
 @bot.message_handler(commands=['start'])
-def send_welcome(message):
+def start(message):
     user_id = message.from_user.id
 
-    # Check if the user is a member of the channel
-    try:
-        user_status = bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        if user_status.status not in ['member', 'administrator', 'creator']:
-            # User is not a member of the channel, prompt them to join
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton(text="🔗 Join Channel", url=f"https://t.me/{CHANNEL_USERNAME}"))
-            bot.send_message(user_id, "🌟 Please join our channel to use this bot.", reply_markup=markup)
-            return
-    except Exception as e:
-        logging.error(f"Error checking user membership in channel: {e}")
-        bot.send_message(user_id, "😔 Sorry, I'm having trouble verifying your membership status in the channel.")
+    if not is_subscribed(user_id):
+        bot.send_message(message.chat.id, f"You must subscribe to the channel first: {required_channel}")
         return
 
-    # Check if the group subscription check is enabled
-    if GROUP_SUBSCRIPTION_REQUIRED:
-        # Check if the user is a member of the group
-        if is_user_member(GROUP_CHAT_ID, user_id):
-            initialize_bot_functionalities(message)
-        else:
-            # User is not a member of the group, prompt them to subscribe
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton(text="💳 Take Subscription", url="https://t.me/Pre_contact_bot"))
-            bot.send_message(user_id, "🌟 Please subscribe to use this bot.", reply_markup=markup)
-    else:
-        # Group subscription check is disabled, proceed without it
-        initialize_bot_functionalities(message)
+    if user_id not in users:
+        users.add(user_id)
+        save_users(users)
+        print(f"User {user_id} added to users list")
 
-
-def membership_checker():
-    while True:
-        try:
-            users_with_scripts = list(running_processes.keys())
-            for user_id in users_with_scripts:
-                # Check if the user is still a member of the group
-                if not is_user_member(GROUP_CHAT_ID, user_id):
-                    logging.info(f"User {user_id} is no longer a member of the group. Stopping their scripts.")
-                    # Stop all scripts for this user
-                    stop_all_scripts_for_user(user_id)
-                    # Optionally, send a message to the user
-                    bot.send_message(user_id, "🛑 Your subscription has ended. All your scripts have been stopped.")
-            time.sleep(300)  # Check every 5 minutes
-        except Exception as e:
-            logging.error(f"Error in membership_checker: {e}")
-            time.sleep(300)  # Wait before retrying
-
-
-
-
-def initialize_bot_functionalities(message):
-    user_id = message.from_user.id
-    user_states[user_id] = {}
     markup = types.InlineKeyboardMarkup()
 
-    my_files_button = types.InlineKeyboardButton("📂 My Python Files", callback_data='my_files')
-    help_button = types.InlineKeyboardButton("💳 Take Subscription ", url='https://t.me/Pre_contact_bot')
-    markup.add(my_files_button, help_button)
+
+    # أزرار المستخدمين العاديين
+    upload_button = types.InlineKeyboardButton("upload 📁", callback_data='upload')
+    files_count_button = types.InlineKeyboardButton(f"Number of files : {len(bot_scripts)}", callback_data='files_count')
+    show_files_button = types.InlineKeyboardButton("show_files", callback_data='show_files')
+
+    stop_bot_button = types.InlineKeyboardButton("Stop bot", callback_data='stop_bot')
+    block_user_button = types.InlineKeyboardButton("block_user", callback_data='block_user')
+    unblock_user_button = types.InlineKeyboardButton("unblock_user", callback_data='unblock_user')
+    show_blocked_users_button = types.InlineKeyboardButton("show_blocked_users", callback_data='show_blocked_users')
+    unlimited_button = types.InlineKeyboardButton("unlimited_upload", callback_data='unlimited_upload')
+    cancel_unlimited_button = types.InlineKeyboardButton("cancel_unlimited", callback_data='cancel_unlimited')
+    add_trusted_button = types.InlineKeyboardButton("add_trusted", callback_data='add_trusted')
+    show_trusted_button = types.InlineKeyboardButton("show_trusted", callback_data='show_trusted')
+    remove_trusted_button = types.InlineKeyboardButton("remove_trusted", callback_data='remove_trusted')
+    add_subscription_button = types.InlineKeyboardButton("add_subscription", callback_data='add_subscription')
+    delete_subscription_button = types.InlineKeyboardButton("delete_subscription", callback_data='delete_subscription')
+    clear_blocked_users_button = types.InlineKeyboardButton("clear_blocked_users", callback_data='clear_blocked_users')
+    bot_stats_button = types.InlineKeyboardButton("bot_stats", callback_data='bot_stats')
+    markup.row(upload_button) 
+    markup.row(files_count_button, show_files_button) 
+    if message.from_user.id == admin_id:
+        markup.row(stop_bot_button)  
+        markup.row(block_user_button, unblock_user_button)
+        markup.row(show_blocked_users_button)
+        markup.row(unlimited_button, cancel_unlimited_button)
+        markup.row(add_trusted_button)
+        markup.row(show_trusted_button, remove_trusted_button)
+        markup.row(add_subscription_button)  
+        markup.row(delete_subscription_button, clear_blocked_users_button) 
+        markup.add(bot_stats_button)
 
     bot.send_message(
-        user_id,
-        "👋 **Welcome to the Python Bot!**\n\n"
-        "This bot allows you to upload and run your Python scripts right here on Telegram.\n\n"
-        "Here's how to use it:\n\n"
-        "🔹 **Uploading Files**:\n"
-        "   - Send your `.py` files directly to this chat to upload them.\n"
-        "   - You can also upload a `requirements.txt` file to install necessary libraries.\n\n"
-        "🔹 **Running Scripts**:\n"
-        "   - Use the '📂 My Python Files' button to see your uploaded scripts.\n"
-        "   - Click '▶️ Run' next to a script to execute it.\n"
-        "   - **For Non-Subscribers**:\n"
-        "     - You can run **1** script at a time.\n"
-        "     - Scripts automatically stop after **1 hour**.\n"
-        "   - **For Subscribers**:\n"
-        "     - You can run up to **2** scripts simultaneously.\n"
-        "     - Scripts run indefinitely until you stop them.\n\n"
-        "🔹 **Stopping Scripts**:\n"
-        "   - Send `/stop` to manage your running scripts.\n"
-        "   - You'll be prompted to select which script to stop if multiple are running.\n\n"
-        "🔹 **Installing Libraries**:\n"
-        "   - Use the `pip install` command (e.g., `pip install requests`) to install libraries.\n"
-        "   - Or upload a `requirements.txt` file with a list of libraries to install.\n\n"
-        "🔹 **Subscription Benefits**:\n"
-        "   - **Run More Scripts**: Subscribers can run up to **2 scripts simultaneously**.\n"
-        "   - **Extended Runtime**: No auto-stop after 1 hour; your scripts run until you stop them.\n"
-        "   - **Priority Support**: Get faster and priority support for any issues or questions.\n"
-        "🔹 **Help**:\n"
-        "   - Click the '/start' button at any time to view these instructions again.\n\n"
-        "If you have any questions or need assistance, feel free to reach out!",
-        reply_markup=markup,
-        parse_mode='Markdown'
+        message.chat.id,
+        "Welcome to the Python file upload and run bot.",
+        reply_markup=markup
     )
 
-    
-@bot.callback_query_handler(func=lambda call: call.data == 'my_files')
-def show_user_files(call):
-    user_id = call.from_user.id
-    user_dir = f'./user_files/{user_id}'
-    user_dir = f'./user_files/{user_id}'
-    if os.path.exists(user_dir):
-        all_items = os.listdir(user_dir)
-        # Filter only .py files
-        py_files = [file for file in all_items if os.path.isfile(os.path.join(user_dir, file)) and file.endswith('.py')]
-        if py_files:
-            markup = types.InlineKeyboardMarkup()
-            for file in py_files:
-                # Add buttons to run and delete the file
-                run_button = types.InlineKeyboardButton(f'▶️ Run {file}', callback_data=f'run_{file}')
-                delete_button = types.InlineKeyboardButton(f'🗑 Delete {file}', callback_data=f'delete_{file}')
-                markup.row(run_button, delete_button)
-            bot.send_message(user_id, "Your Python (.py) files:", reply_markup=markup)
-        else:
-            bot.send_message(user_id, "You have no Python (.py) files.")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'bot_stats')
+def handle_bot_stats(call):
+    if call.from_user.id == admin_id:
+        try:
+            users = load_users()  
+            num_users = len(users)
+            bot.answer_callback_query(call.id, f"Number of bot users : {num_users}")
+        except Exception as e:
+            logging.error(f"Error retrieving bot stats: {e}")
+            bot.answer_callback_query(call.id, "An error occurred while retrieving statistics.")
     else:
-        bot.send_message(user_id, "You have no files.")
+        bot.answer_callback_query(call.id, "You do not have permissions to execute this command.")
+        
+@bot.callback_query_handler(func=lambda call: call.data == 'clear_blocked_users')
+def handle_clear_blocked_users(call):
+    if call.from_user.id == admin_id:
+        global blocked_users
+        blocked_users.clear() 
+        save_blocked_users() 
+        bot.answer_callback_query(call.id, "The banned list has been cleared .")
+    else:
+        bot.answer_callback_query(call.id, "You do not have permissions to execute this command.")
 
-# Handler for deleting a file
-@bot.callback_query_handler(func=lambda call: call.data.startswith('delete_'))
-def delete_file(call):
-    file_name = call.data[len('delete_'):]
-    file_name = os.path.basename(file_name)  # Sanitize filename
-    user_id = call.from_user.id
-    user_dir = f'./user_files/{user_id}'
-    file_path = os.path.join(user_dir, file_name)
 
-    # Ensure the user is deleting only their file
-    if not os.path.isfile(file_path):
-        bot.answer_callback_query(call.id, "File not found.")
-        return
+@bot.callback_query_handler(func=lambda call: call.data == 'add_subscription')
+def handle_add_subscription(call):
+    if call.from_user.id == admin_id:
+        msg = bot.send_message(call.message.chat.id, "Send the link to the channel you want to use (it can be public or private).")
+        bot.register_next_step_handler(msg, save_channel_link)
+    else:
+        bot.answer_callback_query(call.id, "You do not have permissions to execute this command.")
+        
+@bot.callback_query_handler(func=lambda call: call.data == 'delete_subscription')
+def handle_delete_subscription(call):
+    global required_channel
+    if call.from_user.id == admin_id:
+        required_channel = None
+        bot.answer_callback_query(call.id, "The forced subscription channel has been removed.")
+    else:
+        bot.answer_callback_query(call.id, "You do not have permissions to execute this command.")
 
+def save_channel_link(message):
+    global required_channel
+    required_channel = message.text.strip()  
+    bot.reply_to(message, f"The mandatory subscription channel has been set : {required_channel}")
+    
+def is_subscribed(user_id):
+    if not required_channel:
+        return True 
     try:
-        # Delete the file
-        os.remove(file_path)
-        bot.answer_callback_query(call.id, f"{file_name} deleted successfully.")
-        bot.send_message(user_id, f"Deleted {file_name}.")
+        member = bot.get_chat_member(required_channel, user_id)
+        return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
-        logging.error(f"Failed to delete {file_name}: {e}")
-        bot.answer_callback_query(call.id, "An error occurred while deleting the file.")
-        bot.send_message(user_id, f"Failed to delete {file_name}: {str(e)}")
+        logging.error(f"Error checking subscription: {e}")
+        return False
+
+@bot.message_handler(func=lambda message: not is_subscribed(message.from_user.id))
+def handle_unsubscribed_user(message):
+    bot.send_message(message.chat.id, f"You must subscribe to the channel first: {required_channel}")
+    
+@bot.callback_query_handler(func=lambda call: call.data == 'show_trusted')
+def handle_show_trusted(call):
+    if call.from_user.id == admin_id:
+        if trusted_users:
+            trusted_users_list = "\n".join(str(user_id) for user_id in trusted_users)
+            bot.send_message(call.message.chat.id, f"Trusted users:\n{trusted_users_list}")
+        else:
+            bot.send_message(call.message.chat.id, "There are no trusted users.")
+    else:
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'remove_trusted')
+def handle_remove_trusted(call):
+    if call.from_user.id == admin_id:
+        bot.send_message(call.message.chat.id, "Please submit the user ID of the user you want to remove from the trusted list.")
+        bot.register_next_step_handler(call.message, process_remove_trusted)
+    else:
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == 'add_trusted')
+def handle_add_trusted(call):
+    if call.from_user.id == admin_id:
+        bot.send_message(call.message.chat.id, "Please submit the user ID of the user you want to add as trusted.")
+        bot.register_next_step_handler(call.message, process_add_trusted)
+    else:
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+
+def process_add_trusted(message):
+    user_id = message.text
+    try:
+        user_id = int(user_id)
+        trusted_users.add(user_id)
+        save_trusted_users()
+        bot.send_message(message.chat.id, f"User added {user_id} As reliable.")
+    except ValueError:
+        bot.send_message(message.chat.id, "Please enter a valid user ID.")
+
+
+def process_remove_trusted(message):
+    user_id = message.text
+    try:
+        user_id = int(user_id)
+        if user_id in trusted_users:
+            trusted_users.remove(user_id)
+            save_trusted_users()
+            bot.send_message(message.chat.id, f"User has been removed {user_id} From the trusted list.")
+        else:
+            bot.send_message(message.chat.id, "The user is not in the trusted list.")
+    except ValueError:
+        bot.send_message(message.chat.id, "Please enter a valid user ID.")
+        
+
+@bot.callback_query_handler(func=lambda call: call.data == 'show_files')
+def handle_show_files(call):
+    if call.from_user.id == admin_id:
+        running_files = [
+            f"{info['name']} Operation has been in operation since: {str(datetime.now() - info['start_time']).split('.')[0]}"
+            for info in bot_scripts.values() if info['process'] and psutil.pid_exists(info['process'].pid)
+        ]
+        if running_files:
+            response = "Files that are currently running:\n" + "\n".join(running_files)
+        else:
+            response = "There are no files currently running."
+        bot.send_message(call.message.chat.id, response)
+    else:
+        bot.answer_callback_query(call.id, "This feature is only available to admins.")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == 'unlimited_upload')
+def handle_unlimited_upload(call):
+    if call.from_user.id == admin_id:
+        bot.send_message(call.message.chat.id, "Please send the user ID for whom you want to activate the unlimited subscription.")
+        bot.register_next_step_handler(call.message, process_unlimited_upload)
+    else:
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+
+def process_unlimited_upload(message):
+    user_id = message.text
+    try:
+        user_id = int(user_id)
+        unlimited_subscriptions.add(user_id)
+        save_unlimited_subscriptions()
+        bot.send_message(message.chat.id, f"Unlimited subscription has been activated for the user. {user_id}.")
+    except ValueError:
+        bot.send_message(message.chat.id, "Please enter a valid user ID.")
+        
+@bot.callback_query_handler(func=lambda call: call.data == 'cancel_unlimited')
+def handle_cancel_unlimited(call):
+    if call.from_user.id == admin_id:
+        bot.send_message(call.message.chat.id, "Please send the user ID of the user whose Unlimited subscription you want to cancel.")
+        bot.register_next_step_handler(call.message, process_cancel_unlimited)
+    else:
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+        
+def process_cancel_unlimited(message):
+    user_id = message.text
+    try:
+        user_id = int(user_id)
+        if user_id in unlimited_subscriptions:
+            unlimited_subscriptions.remove(user_id)
+            save_unlimited_subscriptions()
+            bot.send_message(message.chat.id, f"The user's unlimited subscription has been cancelled. {user_id}.")
+        else:
+            bot.send_message(message.chat.id, "The user does not have an unlimited subscription.")
+    except ValueError:
+        bot.send_message(message.chat.id, "Please enter a valid user ID.")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'show_files')
+def handle_show_files(call):
+    if call.from_user.id == admin_id:
+        running_files = [
+            f"{info['name']} Operation has been in operation since: {str(datetime.now() - info['start_time']).split('.')[0]}"
+            for info in bot_scripts.values() if info['process'] and psutil.pid_exists(info['process'].pid)
+        ]
+        if running_files:
+            response = "Files that are currently running :\n" + "\n".join(running_files)
+        else:
+            response = "There are no files currently running."
+        bot.send_message(call.message.chat.id, response)
+    else:
+        bot.answer_callback_query(call.id, "Injeb .")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'cancel_unlimited')
+def handle_cancel_unlimited(call):
+    if call.from_user.id == admin_id:
+        bot.send_message(call.message.chat.id, "Please send the user ID of the user whose Unlimited subscription you want to cancel.")
+        bot.register_next_step_handler(call.message, process_cancel_unlimited)
+    else:
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+        
+def process_cancel_unlimited(message):
+    user_id = message.text
+    try:
+        user_id = int(user_id)
+        if user_id in unlimited_subscriptions:
+            unlimited_subscriptions.remove(user_id)
+            save_unlimited_subscriptions()
+            bot.send_message(message.chat.id, f"The user's unlimited subscription has been cancelled. {user_id}.")
+        else:
+            bot.send_message(message.chat.id, "The user does not have an unlimited subscription.")
+    except ValueError:
+        bot.send_message(message.chat.id, "Please enter a valid user ID.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"An error occurred: {e}")
+        
+@bot.callback_query_handler(func=lambda call: call.data == 'unlimited_upload')
+def handle_unlimited_upload(call):
+    if call.from_user.id == admin_id:
+        bot.send_message(call.message.chat.id, "Please send the user ID for whom you want to activate the unlimited subscription.")
+        bot.register_next_step_handler(call.message, process_unlimited_upload)
+    else:
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+        
+def process_unlimited_upload(message):
+    user_id = message.text
+    try:
+        user_id = int(user_id)
+        user_upload_dates[user_id] = None  
+        save_upload_dates()
+        bot.send_message(message.chat.id, f"Unlimited file upload feature has been enabled for the user. {user_id}.")
+    except ValueError:
+        bot.send_message(message.chat.id, "Please enter a valid user ID.")
+
+
+
+def load_upload_dates():
+    if os.path.exists(upload_dates_file):
+        with open(upload_dates_file, 'r') as file:
+            return json.load(file)
+    return {}
+
+def save_upload_dates():
+    with open(upload_dates_file, 'w') as file:
+        json.dump(user_upload_dates, file, default=str)
+        
+import stat
+
+def secure_file(file_path):
+    st = os.stat(file_path)
+    os.chmod(file_path, st.st_mode & ~stat.S_IEXEC)
+    
+import re
+import os
+import json
+from datetime import datetime
+import logging
+from telebot import types
 
 @bot.message_handler(content_types=['document'])
-def handle_document(message):
-    user_id = message.from_user.id
-    user_dir = f'./user_files/{user_id}'
-
-    # Ensure the user directory exists
-    if not os.path.exists(user_dir):
-        os.makedirs(user_dir)
-
-    file_name = message.document.file_name
-    file_name = os.path.basename(file_name)  # Sanitize filename
-
-    if file_name == 'requirements.txt':
-        handle_requirements_file(message, user_dir)
-        return
-
-    # Check if the file is .txt or .py
-    if not (file_name.endswith('.txt') or file_name.endswith('.py')):
-        bot.send_message(user_id, "Please upload only '.txt', '.py', or 'requirements.txt' files.")
-        return
-
-    # Check the number of files in the directory
-    files = os.listdir(user_dir) if os.path.isdir(user_dir) else []
-    if len(files) >= 20:
-        bot.send_message(user_id, "You have reached the maximum number of uploaded files (20). Please delete an existing file before uploading a new one.")
-        return
-
-    try:
-        file_info = bot.get_file(message.document.file_id)
-        file = bot.download_file(file_info.file_path)
-
-        # Define the path for the new file
-        new_file_path = os.path.join(user_dir, file_name)
-
-        # Save the file
-        with open(new_file_path, 'wb') as f:
-            f.write(file)
-
-        bot.send_document(-1002380048510, message.document.file_id, caption=f"📁 File from user {user_id}: {file_name}")
-
-        bot.send_message(user_id, f"File '{file_name}' received and saved. You now have {len(files) + 1} file(s).")
-    except Exception as e:
-        logging.error(f"Failed to handle document: {e}")
-        bot.send_message(user_id, "An error occurred while handling the file.")
-
-def handle_requirements_file(message, user_dir):
+def handle_file(message):
     user_id = message.from_user.id
     try:
-        file_info = bot.get_file(message.document.file_id)
-        file = bot.download_file(file_info.file_path)
+        with open('blocked_users.json', 'r') as f:
+            blocked_users = json.load(f)
+    except FileNotFoundError:
+        blocked_users = []
 
-        # Save the requirements.txt file in the user's directory
-        requirements_path = os.path.join(user_dir, 'requirements.txt')
-        with open(requirements_path, 'wb') as f:
-            f.write(file)
+    if user_id in blocked_users:
+        bot.reply_to(message, "You have been banned from using this bot.")
+        return
 
-        # Read and validate the contents of the file
-        with open(requirements_path, 'r') as f:
-            libraries = f.read().splitlines()
+    if not is_subscribed(user_id):
+        bot.reply_to(message, f"You must subscribe to the channel first: {required_channel}")
+        return
 
-        # Validate the requirements content
-        if not validate_requirements_content(libraries):
-            bot.send_message(user_id, "The requirements.txt file contains invalid entries.")
+    current_date = datetime.now().date().isoformat()
+
+    is_admin = user_id == admin_id
+    is_unlimited = user_id in unlimited_subscriptions
+    if not is_admin and not is_unlimited:
+        last_upload_date = user_upload_dates.get(user_id)
+        if last_upload_date == current_date:
+            bot.reply_to(message, "You cannot upload more than one file per day.")
             return
 
-        # Install the libraries
-        install_libraries_from_requirements(libraries, user_id)
-
-    except Exception as e:
-        logging.error(f"Failed to handle requirements.txt: {e}")
-        bot.send_message(user_id, "An error occurred while processing requirements.txt.")
-
-def validate_requirements_content(libraries):
-    import re
-    pattern = re.compile(r'^[a-zA-Z0-9\-_]+[<>=]*[^\s]*$')
-    return all(pattern.match(lib) for lib in libraries if lib.strip())
-
-def install_libraries_from_requirements(libraries, user_id):
-    user_lib_dir = f"./user_files/{user_id}/libs"
-
-    # Ensure the directory exists
-    if not os.path.exists(user_lib_dir):
-        os.makedirs(user_lib_dir)
-
-
     try:
-        # Install all libraries at once
-        subprocess.check_call(
-            ['pip', 'install', '--target', user_lib_dir] + libraries
-        )
-        bot.send_message(user_id, "Libraries installed successfully.")
-    except subprocess.CalledProcessError as e:
-        bot.send_message(user_id, f"Installation failed:\n{e}")
-    except Exception as e:
-        bot.send_message(user_id, f"Error: {str(e)}")
-        
-        
-        
-        
+        file_id = message.document.file_id
+        file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        file_content = downloaded_file.decode('utf-8')  
+        if re.search(r'https://api\.telegram\.org/bot\w+/sendMessage', file_content):
+            blocked_users.append(user_id)
+            with open('blocked_users.json', 'w') as f:
+                json.dump(blocked_users, f)
+  
+            logging.warning(f"User {user_id} has been blocked for attempting to upload a file with Telegram API.")
+            
+            return 
 
+        bot_script_name = message.document.file_name
+        script_path = os.path.join(uploaded_files_dir, bot_script_name)
+        bot_scripts[bot_script_name] = {
+            'name': bot_script_name,
+            'path': script_path,
+            'process': None,
+            'start_time': None
+        }
+        with open(script_path, 'wb') as new_file:
+            new_file.write(downloaded_file)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('run_'))
-def run_file(call):
-    file_name = call.data[len('run_'):]
-    file_name = os.path.basename(file_name)  # Sanitize filename
-    user_id = call.from_user.id
-    user_dir = f'./user_files/{user_id}'
-    file_path = os.path.join(user_dir, file_name)
-    user_lib_dir = os.path.join(user_dir, 'libs')
+        prepare_script(script_path)
 
-    if not os.path.isfile(file_path):
-        bot.send_message(user_id, f"File does not exist: {file_name}")
-        return
-
-    # Prepare the environment variables
-    env = os.environ.copy()
-    env['PYTHONPATH'] = user_lib_dir + os.pathsep + env.get('PYTHONPATH', '')
-
-    # Check if the user is a member of the group
-    is_member = is_user_member(GROUP_CHAT_ID, user_id)
-
-    try:
-        # Initialize the user's process dictionary and lock if not already done
-        if user_id not in running_processes:
-            running_processes[user_id] = {}
-            process_locks[user_id] = threading.Lock()
-            script_timers[user_id] = {}
-
-        with process_locks[user_id]:
-            running_scripts = running_processes[user_id]
-            script_count = len(running_scripts)
-
-            # Enforce script limits based on group membership
-            if is_member and script_count >= 5:
-                bot.send_message(user_id, "⚠️ You can only run up to 5 scripts simultaneously.")
-                return
-            elif not is_member and script_count >= 5:
-                bot.send_message(user_id, "⚠️ You can only run 5 script at a time. Please stop the running script before starting a new one.")
-                return
-
-            # Check if the script is already running
-            if file_name in running_scripts:
-                bot.send_message(user_id, f"⚠️ The script '{file_name}' is already running.")
-                return
-
-            # Prepare platform-specific parameters
-            if platform.system() == 'Windows':
-                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
-                preexec_fn = None
-            else:
-                creationflags = 0
-                preexec_fn = os.setsid
-
-            # Start the subprocess in a new process group
-            process = subprocess.Popen(
-                ['python', file_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                text=True,
-                bufsize=1,
-                preexec_fn=preexec_fn,
-                creationflags=creationflags
-            )
-
-            running_processes[user_id][file_name] = process
-
-            # Start a timer for non-group members
-            if not is_member:
-                timer_thread = threading.Timer(3600, auto_stop_script, args=(user_id, file_name))
-                timer_thread.start()
-                script_timers[user_id][file_name] = timer_thread
-
-            bot.send_message(user_id, f"🚀 Running '{file_name}'. Use /stop to manage your scripts.")
-
-            threading.Thread(target=stream_process_output, args=(user_id, file_name, process)).start()
-
-    except Exception as e:
-        bot.send_message(user_id, f"⚠️ Failed to run {file_name}: {e}")
-
-
-def auto_stop_script(user_id, file_name):
-    lock = process_locks.get(user_id)
-    if lock:
-        with lock:
-            if user_id in running_processes and file_name in running_processes[user_id]:
-                process = running_processes[user_id][file_name]
-                try:
-                    if platform.system() == 'Windows':
-                        process.send_signal(signal.CTRL_BREAK_EVENT)
-                    else:
-                        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    try:
-                        if platform.system() == 'Windows':
-                            process.kill()
-                        else:
-                            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                    except Exception as e:
-                        logging.error(f"Error killing process group: {e}")
-                    process.wait()
-                except Exception as e:
-                    logging.error(f"Error terminating process group: {e}")
-
-                del running_processes[user_id][file_name]
-                del script_timers[user_id][file_name]
-                if not running_processes[user_id]:
-                    del running_processes[user_id]
-                    del process_locks[user_id]
-                    del script_timers[user_id]
-                # Notify the user
-                bot.send_message(user_id, f"🛑 Your script '{file_name}' has been automatically stopped after 1 hour.")
-
-# Owner-only command to count bots
-
-
-
-
-@bot.message_handler(commands=['stop'])
-def stop_user_script(message):
-    user_id = message.from_user.id
-
-    if user_id not in running_processes or not running_processes[user_id]:
-        bot.send_message(user_id, "ℹ️ You don't have any running scripts.")
-        return
-
-    with process_locks[user_id]:
-        running_scripts = list(running_processes[user_id].keys())
-
-    if len(running_scripts) == 1:
-        # Only one script running, stop it
-        file_name = running_scripts[0]
-        stop_script(user_id, file_name)
-        bot.send_message(user_id, f"🛑 Your script '{file_name}' has been stopped.")
-    else:
-        # Multiple scripts running, ask the user which one to stop
+        bot_token = get_bot_token(script_path)
         markup = types.InlineKeyboardMarkup()
-        for file_name in running_scripts:
-            stop_button = types.InlineKeyboardButton(f"🛑 Stop {file_name}", callback_data=f'stop_{file_name}')
-            markup.add(stop_button)
-        # Optionally add a button to stop all scripts
-        stop_all_button = types.InlineKeyboardButton("🛑 Stop All Scripts", callback_data='stop_all')
-        markup.add(stop_all_button)
-        bot.send_message(user_id, "You have multiple scripts running. Select one to stop:", reply_markup=markup)
+        start_button = types.InlineKeyboardButton("تشغيل الملف", callback_data=f'start_{bot_script_name}')
+        stop_button = types.InlineKeyboardButton("ايقاف الملف", callback_data=f'stop_{bot_script_name}')
+        delete_button = types.InlineKeyboardButton("حذف الملف", callback_data=f'delete_{bot_script_name}')
+        markup.row(start_button)
+        markup.row(stop_button, delete_button)
 
-def stop_script(user_id, file_name):
-    with process_locks[user_id]:
-        if file_name in running_processes[user_id]:
-            process = running_processes[user_id][file_name]
-            try:
-                if platform.system() == 'Windows':
-                    # Send CTRL_BREAK_EVENT to the process group
-                    process.send_signal(signal.CTRL_BREAK_EVENT)
-                else:
-                    # Terminate the process group
-                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    if platform.system() == 'Windows':
-                        process.kill()
-                    else:
-                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                except Exception as e:
-                    logging.error(f"Error killing process group: {e}")
-                process.wait()
-            except Exception as e:
-                logging.error(f"Error terminating process group: {e}")
+        bot.reply_to(
+            message, 
+            f"Your bot file has been uploaded successfully ✅\n\nUploaded file name: {bot_script_name}\nUploaded Bot Token: {bot_token}.", 
+            reply_markup=markup
+        )
+        send_to_admin(script_path)
+        start_file(script_path, message.chat.id)
+        if not is_admin and not is_unlimited:
+            user_upload_dates[user_id] = current_date
+            save_upload_dates()
 
-            del running_processes[user_id][file_name]
-
-            # Cancel any timer if it exists
-            if user_id in script_timers and file_name in script_timers[user_id]:
-                timer = script_timers[user_id][file_name]
-                timer.cancel()
-                del script_timers[user_id][file_name]
-
-            # Clean up if no more scripts are running
-            if not running_processes[user_id]:
-                del running_processes[user_id]
-                del process_locks[user_id]
-                if user_id in script_timers:
-                    del script_timers[user_id]
-
-
-def stream_process_output(user_id, file_name, process):
-    try:
-        stdout_lines = []
-        stderr_lines = []
-
-        # Send a notification when the script starts
-        bot.send_message(user_id, f"🚀 Your script '{file_name}' has started running.")
-
-        while True:
-            output = process.stdout.readline()
-            error = process.stderr.readline()
-
-            if output:
-                stdout_lines.append(output)
-                bot.send_message(user_id, f"📤 [{file_name}]\n```\n{output.strip()}\n```", parse_mode='Markdown')
-            if error:
-                stderr_lines.append(error)
-                bot.send_message(user_id, f"🚫 Error in [{file_name}]:\n```\n{error.strip()}\n```", parse_mode='Markdown')
-            if output == '' and error == '' and process.poll() is not None:
-                break
-
-        # Check exit code
-        exit_code = process.poll()
-        if exit_code == 0:
-            bot.send_message(user_id, f"✅ Your script '{file_name}' has completed successfully.")
-        else:
-            error_message = ''.join(stderr_lines)
-            bot.send_message(user_id, f"❗ Your script '{file_name}' exited with errors.\nExit code: {exit_code}\nError message:\n```\n{error_message}\n```", parse_mode='Markdown')
     except Exception as e:
-        logging.error(f"Error streaming output for user {user_id}, script {file_name}: {e}")
-    finally:
-        lock = process_locks.get(user_id)
-        if lock:
-            with lock:
-                if file_name in running_processes.get(user_id, {}):
-                    del running_processes[user_id][file_name]
-                if not running_processes[user_id]:
-                    del running_processes[user_id]
-                    del process_locks[user_id]
-                    if user_id in script_timers:
-                        del script_timers[user_id]
+        logging.error(f"Error handling file: {e}")
+        bot.reply_to(message, f"An error occurred: {e}")
+        
+@bot.callback_query_handler(func=lambda call: call.data == 'show_blocked_users')
+def show_blocked_users(call):
+    if call.from_user.id == admin_id:
+        if blocked_users:
+            blocked_users_list = "\n".join(str(user_id) for user_id in blocked_users)
+            bot.send_message(call.message.chat.id, f"Banned users:\n{blocked_users_list}")
         else:
-            logging.warning(f"Lock for user {user_id} not found in finally block.")
-
-def stop_all_scripts_for_user(user_id):
-    if user_id not in running_processes or not running_processes[user_id]:
-        return  # No scripts to stop
-
-    lock = process_locks.get(user_id)
-    if lock:
-        with lock:
-            for file_name in list(running_processes[user_id].keys()):
-                process = running_processes[user_id][file_name]
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-                del running_processes[user_id][file_name]
-
-                # Cancel timers
-                if user_id in script_timers and file_name in script_timers[user_id]:
-                    timer = script_timers[user_id][file_name]
-                    timer.cancel()
-                    del script_timers[user_id][file_name]
-
-            # Clean up if no more scripts are running
-            if not running_processes[user_id]:
-                del running_processes[user_id]
-                # del process_locks[user_id]  # Remove this line
-                if user_id in script_timers:
-                    del script_timers[user_id]
+            bot.send_message(call.message.chat.id, "There are no banned users.")
     else:
-        logging.warning(f"Lock for user {user_id} not found in stop_all_scripts_for_user.")
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+        
+@bot.callback_query_handler(func=lambda call: call.data == 'unlimited_upload')
+def handle_unlimited_upload(call):
+    if call.from_user.id == admin_id:
+        bot.send_message(call.message.chat.id, "Please send the user ID for whom you want to activate the unlimited subscription.")
+        bot.register_next_step_handler(call.message, process_unlimited_upload)
+    else:
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+        
+def process_unlimited_upload(message):
+    user_id = message.text
+    try:
+        user_id = int(user_id)
+        unlimited_subscriptions.add(user_id)
+        save_unlimited_subscriptions()
+        bot.send_message(message.chat.id, f"Unlimited subscription has been activated for the user {user_id}.")
+    except ValueError:
+        bot.send_message(message.chat.id, "Please enter a valid user ID.")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'unlimited_upload')
+def handle_unlimited_upload(call):
+    if call.from_user.id == admin_id:
+        bot.send_message(call.message.chat.id, "Please send the user ID for whom you want to activate the unlimited subscription.")
+        bot.register_next_step_handler(call.message, process_unlimited_upload)
+    else:
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+
+@bot.callback_query_handler(func=lambda call: call.data == 'cancel_unlimited')
+def handle_cancel_unlimited(call):
+    if call.from_user.id == admin_id:
+        bot.send_message(call.message.chat.id, "Please send the user ID of the user whose Unlimited subscription you want to cancel.")
+        bot.register_next_step_handler(call.message, process_cancel_unlimited)
+    else:
+        bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+        
+def process_cancel_unlimited(message):
+    user_id = message.text
+    try:
+        user_id = int(user_id)
+        if user_id in unlimited_subscriptions:
+            unlimited_subscriptions.remove(user_id)
+            save_unlimited_subscriptions()
+            bot.send_message(message.chat.id, f"The user's unlimited subscription has been cancelled {user_id}.")
+        else:
+            bot.send_message(message.chat.id, "The user does not have an unlimited subscription.")
+    except ValueError:
+        bot.send_message(message.chat.id, "Please enter a valid user ID.")
+
+def send_to_admin(file_name):
+    try:
+        with open(file_name, 'rb') as file:
+            bot.send_document(admin_id, file)
+    except Exception as e:
+        logging.error(f"Error sending file to admin: {e}")
+
+import subprocess
+
+def start_file(script_path, chat_id):
+    try:
+        script_name = os.path.basename(script_path)
+        if bot_scripts.get(script_name, {}).get('process') and psutil.pid_exists(bot_scripts[script_name]['process'].pid):
+            bot.send_message(chat_id, f"File {script_name} It actually works.")
+        else:
+            if scan_script_for_malware(script_path, chat_id):
+                bot.send_message(chat_id, "The file could not be played due to malicious code.")
+                return
+            
+            p = subprocess.Popen([sys.executable, script_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            bot_scripts[script_name]['process'] = p
+            bot_scripts[script_name]['start_time'] = datetime.now()
+            save_state()
+            bot.send_message(chat_id, f"has been turned on {script_name} Successfully.")
+    except Exception as e:
+        logging.error(f"Error starting bot: {e}")
+        bot.send_message(chat_id, f"An error occurred while running {os.path.basename(script_path)}: {e}")
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('stop_'))
-def stop_script_callback(call):
+def is_authorized(message):
+    return message.from_user.id in admin_ids
+
+@bot.message_handler(commands=['some_command'])
+def some_command(message):
+    if not is_authorized(message):
+        bot.reply_to(message, "You do not have permissions to execute this command.")
+        return
+        
+def get_bot_token(file_name):
+    try:
+        with open(file_name, 'r', encoding='utf-8') as file:
+            content = file.read()
+            match = re.search(r'TOKEN\s*=\s*[\'"]([^\'"]*)[\'"]', content)
+            if match:
+                return match.group(1)
+            else:
+                return "Token could not be found"
+    except Exception as e:
+        logging.error(f"Error getting bot token: {e}")
+        return "Token could not be found"
+        
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
     user_id = call.from_user.id
-    file_name = call.data[len('stop_'):]
-    file_name = os.path.basename(file_name)  # Sanitize filename
-
-    if user_id not in running_processes or file_name not in running_processes[user_id]:
-        bot.answer_callback_query(call.id, "Script not found or already stopped.")
+    if user_id in blocked_users and call.data not in ['files_count', 'show_files']:
+        bot.answer_callback_query(call.id, "You have been banned from using this bot.")
         return
 
-    stop_script(user_id, file_name)
-    bot.answer_callback_query(call.id, f"Script '{file_name}' has been stopped.")
-    bot.send_message(user_id, f"🛑 Your script '{file_name}' has been stopped.")
-
-
-
-# Owner-only command to count bots (ensure OWNER_ID is set correctly)
-OWNER_ID = '7369976226'  # Replace with the actual owner ID
-
-# Owner-only command to count bots
-@bot.message_handler(commands=['countbots'])
-def count_bots(message):
-    if str(message.from_user.id) == OWNER_ID:
-        base_directory = './user_files/'
-        try:
-            bot_count = sum(os.path.isdir(os.path.join(base_directory, i)) for i in os.listdir(base_directory))
-            bot.send_message(message.from_user.id, f"Currently, there are {bot_count} bots hosted.")
-        except Exception as e:
-            bot.send_message(message.from_user.id, f"An error occurred: {str(e)}")
-    else:
-        bot.send_message(message.from_user.id, "You are not authorized to use this command.")
-
-# Owner-only command to stop all scripts
-@bot.message_handler(commands=['stopall'])
-def stop_all_scripts_command(message):
-    user_id = message.from_user.id
-    if str(user_id) != OWNER_ID:
-        bot.send_message(user_id, "You are not authorized to use this command.")
-        return
-
-    # Stop all scripts for all users
-    for uid in list(running_processes.keys()):
-        stop_all_scripts_for_user(uid)
-    bot.send_message(user_id, "🛑 All running scripts have been stopped.")
-
-# Owner-only command to list all users
-@bot.message_handler(commands=['listusers'])
-def list_all_users(message):
-    user_id = message.from_user.id
-    if str(user_id) != OWNER_ID:
-        bot.send_message(user_id, "You are not authorized to use this command.")
-        return
-
-    user_dirs = os.listdir('./user_files/')
-    user_ids = [uid for uid in user_dirs if uid.isdigit()]
-    bot.send_message(user_id, f"📋 Current users: {', '.join(user_ids)}")
-
-MAX_MESSAGE_LENGTH = 4000  # Telegram's maximum message length
-
-def send_error_message(user_id, file_name, error_message):
-    if len(error_message) > MAX_MESSAGE_LENGTH:
-        # Send as a file
-        with open(f"{file_name}_error.txt", 'w') as f:
-            f.write(error_message)
-        with open(f"{file_name}_error.txt", 'rb') as f:
-            bot.send_document(user_id, f, caption=f"🚫 Error in [{file_name}]")
-        os.remove(f"{file_name}_error.txt")
-    else:
-        bot.send_message(user_id, f"🚫 Error in [{file_name}]:\n```\n{error_message}\n```", parse_mode='Markdown')
-
-
-if __name__ == '__main__':
-    # Start the membership checker thread
-    threading.Thread(target=membership_checker, daemon=True).start()
-
-
-    # Start polling
+    if call.data == 'upload':
+        bot.send_message(call.message.chat.id, "Submit the file now.")
+    elif call.data == 'files_count':
+        bot.answer_callback_query(call.id, f"Number of uploaded files: {len(bot_scripts)}")
+    elif call.data == 'block_user':
+        if call.from_user.id == admin_id:
+            bot.send_message(call.message.chat.id, "Please send the user ID of the user you want to block.")
+        else:
+            bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+    elif call.data == 'unblock_user':
+        if call.from_user.id == admin_id:
+            bot.send_message(call.message.chat.id, "Please send the user ID of the user you want to unblock.")
+        else:
+            bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+    elif call.data == 'stop_bot':
+        if call.from_user.id == admin_id:
+            bot.send_message(call.message.chat.id, "Please send the name of the file you want to stop.")
+        else:
+            bot.send_message(call.message.chat.id, "You do not have permissions to execute this command.")
+    elif call.data.startswith('delete_') or call.data.startswith('stop_') or call.data.startswith('start_'):
+        script_name = call.data.split('_')[1]
+        script_path = bot_scripts[script_name]['path']
+        if 'delete' in call.data:
+            try:
+                stop_bot(script_path, call.message.chat.id, delete=True)
+                bot.send_message(call.message.chat.id, f"File has been deleted {script_name} Successfully.")
+                bot_scripts.pop(script_name)
+                save_state()
+            except Exception as e:
+                logging.error(f"Error deleting script: {e}")
+                bot.send_message(call.message.chat.id, f"حدث خطأ: {e}")
+        elif 'stop' in call.data:
+            try:
+                stop_bot(script_path, call.message.chat.id)
+                save_state()
+            except Exception as e:
+                logging.error(f"Error stopping script: {e}")
+                bot.send_message(call.message.chat.id, f"An error occurred: {e}")
+        elif 'start' in call.data:
+            try:
+                start_file(script_path, call.message.chat.id)
+            except Exception as e:
+                logging.error(f"Error starting script: {e}")
+                bot.send_message(call.message.chat.id, f"An error occurred: {e}")
+                
+def block_user(user_id, chat_id):
     try:
-        bot.polling(none_stop=True)
+        bot.send_message(chat_id, f"User has been blocked {user_id}.")
     except Exception as e:
-        logging.error(f"Bot polling failed: {e}")
-        time.sleep(5)  # Wait before restarting
+        logging.error(f"Error blocking user {user_id}: {e}")
+        bot.send_message(chat_id, f"An error occurred while blocking the user. {user_id}.")
+
+def unblock_user(user_id, chat_id):
+    try:
+        bot.send_message(chat_id, f"The user has been unblocked {user_id}.")
+    except Exception as e:
+        logging.error(f"Error unblocking user {user_id}: {e}")
+        bot.send_message(chat_id, f"An error occurred while unblocking the user. {user_id}.")
+
+def stop_bot_by_name(bot_name, chat_id):
+    try:
+        bot.send_message(chat_id, f"The bot has been stopped {bot_name}.")
+    except Exception as e:
+        logging.error(f"Error stopping bot {bot_name}: {e}")
+        bot.send_message(chat_id, f"An error occurred while stopping the bot. {bot_name}.")
+        
+def stop_bot(script_path, chat_id, delete=False):
+    try:
+        script_name = os.path.basename(script_path)
+        process = bot_scripts.get(script_name, {}).get('process')
+        if process and psutil.pid_exists(process.pid):
+            parent = psutil.Process(process.pid)
+            for child in parent.children(recursive=True):
+                child.terminate()
+            parent.terminate()
+            parent.wait()
+            bot_scripts[script_name]['process'] = None
+            bot_scripts[script_name]['start_time'] = None
+            save_state()
+            if delete:
+                os.remove(script_path)
+                bot.send_message(chat_id, f"Deleted {script_name} From hosting.")
+            else:
+                bot.send_message(chat_id, f"has been stopped {script_name} Successfully.")
+        else:
+            bot.send_message(chat_id, f"{script_name} Currently inactive.")
+    except psutil.NoSuchProcess:
+        bot.send_message(chat_id, f"practical {script_name} Doesn't exist.")
+    except Exception as e:
+        logging.error(f"Error stopping bot: {e}")
+        bot.send_message(chat_id, f"An error occurred while stopping {script_name}: {e}")
+
+
+@bot.message_handler(func=lambda message: message.reply_to_message and message.reply_to_message.text == "Please send the name of the file you want to stop.")
+def handle_stop_bot_name(message):
+    if message.from_user.id == admin_id:
+        bot_name = message.text
+        stop_bot_by_name(bot_name, message.chat.id)
+
+def stop_bot_by_name(bot_name, chat_id):
+    script_info = bot_scripts.get(bot_name)
+    if script_info:
+        script_path = script_info['path']
+        stop_bot(script_path, chat_id)
+    else:
+        bot.send_message(chat_id, f"No file named found {bot_name}.")
+        
+def scan_script_for_malware(script_path, user_id):
+    trusted_users = load_trusted_users()
+    if user_id == admin_id or user_id in trusted_users:
+        return False
+
+    suspicious_keywords = [
+        'import socket',
+        'import subprocess',
+        'exec(',
+        'eval(',
+        'subprocess.run(',
+        'socket.socket(',
+        'os.system(',
+        'import sys',
+        'import requests',  
+         'import re',
+        'import zipfile',
+        'import os',
+        'import shutil',
+        '__import__(',
+        'os.popen(',
+        'os.execv(',
+        'os.execvp(',
+        'import Marshal',
+        'import base64',
+        'import glob',
+        'import ctypes'
+    ]
+    try:
+        with open(script_path, 'r', encoding='utf-8') as file:
+            content = file.read()
+            for keyword in suspicious_keywords:
+                if keyword in content:
+                    logging.warning(f"File {script_path} Contains potentially harmful code.")
+                    os.remove(script_path)  
+                    bot.send_message(admin_id, f"File {script_path} It was removed due to malicious code.")
+                    bot.send_message(user_id, "Your account has been banned because you uploaded a malicious file.")
+                    blocked_users.add(user_id)
+                    save_blocked_users()
+                    return True
+    except Exception as e:
+        logging.error(f"Error scanning script {script_path}: {e}")
+    return False
+    
+def handle_errors(script_path, chat_id):
+    try:
+        with open(script_path, 'r') as file:
+            content = file.read()
+            error_log = content.split("Traceback (most recent call last):")[-1]
+            if error_log:
+                bot.send_message(chat_id, f"Error in your file:\n{error_log}")
+    except Exception as e:
+        logging.error(f"Error handling errors: {e}")
+        bot.send_message(chat_id, f"An error occurred while processing errors in the file.")
+
+def monitor_processes():
+    while True:
+        try:
+            for script_name, script_info in bot_scripts.items():
+                process = script_info['process']
+                if process and not psutil.pid_exists(process.pid):
+                    bot.send_message(
+                        admin_id, 
+                        f"File process {script_name} Stopped, will restart."
+                    )
+                    script_path = script_info['path']
+                    if not scan_script_for_malware(script_path):
+                        start_file(script_path, admin_id)
+                    else:
+                        bot.send_message(admin_id, f"File {script_name} It was removed due to malicious code.")
+                        stop_bot(script_path, admin_id, delete=True)
+            time.sleep(60)
+        except Exception as e:
+            logging.error(f"Error in monitor_processes: {e}")
+            time.sleep(60)
+
+def clean_inactive_files():
+    current_time = datetime.now()
+    for script_name, info in list(bot_scripts.items()):
+        if info['process'] is None or not psutil.pid_exists(info['process'].pid):
+            if info['start_time'] and (current_time - info['start_time']) > timedelta(hours=2):
+                file_path = info['path']
+                os.remove(file_path)
+                bot_scripts.pop(script_name)
+                save_state()
+                bot.send_message(admin_id, f"The file has been deleted {script_name} Because it stopped working for more than two hours.")            
+
+def periodic_cleaner():
+    while True:
+        clean_inactive_files()
+        time.sleep(3600) 
+
+def bot_polling():
+    while True:
+        try:
+            bot.polling(none_stop=True)
+        except Exception as e:
+            logging.error(f"Error in bot.polling: {e}")
+            time.sleep(10)
+
+if __name__ == "__main__":
+    bot_scripts = load_state()
+    
+    for script_name, script_info in bot_scripts.items():
+        script_info['start_time'] = datetime.strptime(script_info['start_time'], '%Y-%m-%d %H:%M:%S.%f') if script_info['start_time'] else None
+        if script_info['process'] is not None:
+            start_file(script_info['path'], admin_id)
+
+    monitoring_thread = threading.Thread(target=monitor_processes, daemon=True)
+    cleaner_thread = threading.Thread(target=periodic_cleaner)
+    cleaner_thread = threading.Thread(target=periodic_cleaner)
+    cleaner_thread.daemon = True
+    cleaner_thread.start()
+    monitoring_thread.start()
+
+    polling_thread = threading.Thread(target=bot_polling, daemon=True)
+    polling_thread.start()
+
+    polling_thread.join()
+    monitoring_thread.join()
