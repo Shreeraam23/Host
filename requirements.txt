@@ -4,3 +4,4 @@ requests
 aiohttp
 Flask
 gunicorn
+psutil
