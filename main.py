@@ -13,7 +13,7 @@ import threading
 from datetime import datetime, timedelta
 import json
 
-TOKEN = '8256340896:AAEFl_DD07RZ9_pYyT9D2AS3RnLabQ_yi9w'
+TOKEN = '8256340896:AAErY85cjphirc1C3-EpHcvsLlbxooYP89A'
 bot = telebot.TeleBot(TOKEN)
 
 required_channel = None
